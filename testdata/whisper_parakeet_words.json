@@ -1,0 +1,208 @@
+{
+ "text": "1\n00:00:00,000 --> 00:00:03,000\nMade with Whisper Pro ASR\n",
+ "segments": [
+  {
+   "start": 17.39,
+   "end": 19.3,
+   "text": "alpha bravo charlie delta echo foxtrot golf hotel",
+   "words": [
+    {
+     "start": 17.388,
+     "end": 17.708,
+     "word": " alpha",
+     "probability": 0.9959
+    },
+    {
+     "start": 17.708,
+     "end": 17.868,
+     "word": " bravo",
+     "probability": 0.7497
+    },
+    {
+     "start": 17.868,
+     "end": 18.028,
+     "word": " charlie",
+     "probability": 0.9982
+    },
+    {
+     "start": 18.028,
+     "end": 18.188,
+     "word": " delta",
+     "probability": 0.9994
+    },
+    {
+     "start": 18.188,
+     "end": 18.428,
+     "word": " echo",
+     "probability": 0.9978
+    },
+    {
+     "start": 18.428,
+     "end": 18.748,
+     "word": " foxtrot",
+     "probability": 0.9098
+    },
+    {
+     "start": 18.748,
+     "end": 18.908,
+     "word": " golf",
+     "probability": 0.9944
+    },
+    {
+     "start": 18.908,
+     "end": 19.296,
+     "word": " hotel",
+     "probability": 0.7204
+    }
+   ],
+   "language": "en"
+  },
+  {
+   "start": 19.3,
+   "end": 21.14,
+   "text": "india juliet kilo lima mike",
+   "words": [
+    {
+     "start": 19.296,
+     "end": 19.616,
+     "word": " india",
+     "probability": 0.9551
+    },
+    {
+     "start": 19.616,
+     "end": 19.856,
+     "word": " juliet",
+     "probability": 0.9949
+    },
+    {
+     "start": 19.856,
+     "end": 20.256,
+     "word": " kilo",
+     "probability": 0.9999
+    },
+    {
+     "start": 20.256,
+     "end": 20.496,
+     "word": " lima",
+     "probability": 0.8881
+    },
+    {
+     "start": 20.576,
+     "end": 21.136,
+     "word": " mike",
+     "probability": 0.8012
+    }
+   ],
+   "language": "en"
+  },
+  {
+   "start": 21.52,
+   "end": 24.4,
+   "text": "november oscar papa quebec romeo alpha bravo charlie delta echo foxtrot",
+   "words": [
+    {
+     "start": 21.52,
+     "end": 21.76,
+     "word": " november",
+     "probability": 0.6828
+    },
+    {
+     "start": 21.76,
+     "end": 22.0,
+     "word": " oscar",
+     "probability": 0.9999
+    },
+    {
+     "start": 22.0,
+     "end": 22.4,
+     "word": " papa",
+     "probability": 0.9996
+    },
+    {
+     "start": 22.4,
+     "end": 22.56,
+     "word": " quebec",
+     "probability": 1.0
+    },
+    {
+     "start": 22.56,
+     "end": 23.12,
+     "word": " romeo",
+     "probability": 0.9989
+    },
+    {
+     "start": 23.12,
+     "end": 23.36,
+     "word": " alpha",
+     "probability": 0.9548
+    },
+    {
+     "start": 23.36,
+     "end": 23.44,
+     "word": " bravo",
+     "probability": 0.6829
+    },
+    {
+     "start": 23.44,
+     "end": 23.68,
+     "word": " charlie",
+     "probability": 0.9739
+    },
+    {
+     "start": 23.68,
+     "end": 23.76,
+     "word": " delta",
+     "probability": 0.9979
+    },
+    {
+     "start": 23.76,
+     "end": 23.84,
+     "word": " echo",
+     "probability": 0.9959
+    },
+    {
+     "start": 23.84,
+     "end": 24.4,
+     "word": " foxtrot",
+     "probability": 0.8772
+    }
+   ],
+   "language": "en"
+  },
+  {
+   "start": 24.4,
+   "end": 26.48,
+   "text": "golf hotel india juliet",
+   "words": [
+    {
+     "start": 24.4,
+     "end": 24.64,
+     "word": " golf",
+     "probability": 0.9688
+    },
+    {
+     "start": 24.64,
+     "end": 24.8,
+     "word": " hotel",
+     "probability": 0.9986
+    },
+    {
+     "start": 24.8,
+     "end": 25.6,
+     "word": " india",
+     "probability": 0.9973
+    },
+    {
+     "start": 25.84,
+     "end": 26.48,
+     "word": " juliet",
+     "probability": 0.8306
+    }
+   ],
+   "language": "en"
+  }
+ ],
+ "language": "en",
+ "language_probability": 1.0,
+ "video_duration_sec": 90.0053125
+}

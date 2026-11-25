@@ -1,0 +1,27 @@
+# Built plugin binary (GOOS=linux GOARCH=amd64 go build -o plugin .)
+/plugin
+*.test
+*.exe
+
+# Audio windows and temporary files written while checking
+window-*.mka
+*.mka
+*.tmp
+*.part
+
+# Test caches: Whisper transcripts cached next to windows, eval logs
+*.mka.json
+*.log
+/.cache/
+
+# Scratchpad and local notes, never committed
+scratchpad/
+CLAUDE.local.md
+.claude/
+
+# Editors and OS
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/

@@ -1,0 +1,105 @@
+{
+ "text": "1\n00:00:00,000 --> 00:00:03,000\nMade with Whisper Pro ASR\n\n2\n...\nword0x0 word0x1 word0x2 word0x3 word0x4 word0x5 word0x6 word0x7\n\n3\n...\nword1x0 word1x1 word1x2 word1x3 word1x4\n\n4\n...\nword2x0 word2x1 word2x2 word2x3 word2x4 word2x5 word2x6 word2x7 word2x8 word2x9 word2x10 word2x11 word2x12 word2x13 word2x14\n\n5\n...\nword3x0 word3x1 word3x2 word3x3 word3x4 word3x5 word3x6 word3x7 word3x8 word3x9 word3x10 word3x11 word3x12\n\n6\n...\nword4x0\n\n7\n...\nword5x0 word5x1\n\n8\n...\nword6x0 word6x1 word6x2 word6x3 word6x4 word6x5 word6x6 word6x7 word6x8 word6x9 word6x10 word6x11 word6x12 word6x13 word6x14 word6x15\n\n9\n...\nword7x0 word7x1 word7x2 word7x3 word7x4 word7x5 word7x6\n\n10\n...\nword8x0 word8x1 word8x2 word8x3 word8x4 word8x5 word8x6 word8x7 word8x8 word8x9 word8x10 word8x11 word8x12 word8x13 word8x14 word8x15 word8x16\n\n11\n...\nword9x0 word9x1 word9x2 word9x3 word9x4 word9x5 word9x6 word9x7\n\n12\n...\nword10x0 word10x1 word10x2 word10x3 word10x4 word10x5 word10x6 word10x7\n\n13\n...\nword11x0 word11x1 word11x2 word11x3 word11x4 word11x5\n\n14\n...\nword12x0 word12x1 word12x2 word12x3\n\n15\n...\nword13x0\n\n",
+ "segments": [
+  {
+   "start": 0.0,
+   "end": 4.0,
+   "text": "word0x0 word0x1 word0x2 word0x3 word0x4 word0x5 word0x6 word0x7",
+   "language": "en"
+  },
+  {
+   "start": 4.0,
+   "end": 5.0,
+   "text": "word1x0 word1x1 word1x2 word1x3 word1x4",
+   "language": "en"
+  },
+  {
+   "start": 5.0,
+   "end": 9.0,
+   "text": "word2x0 word2x1 word2x2 word2x3 word2x4 word2x5 word2x6 word2x7 word2x8 word2x9 word2x10 word2x11 word2x12 word2x13 word2x14",
+   "language": "en"
+  },
+  {
+   "start": 9.0,
+   "end": 12.0,
+   "text": "word3x0 word3x1 word3x2 word3x3 word3x4 word3x5 word3x6 word3x7 word3x8 word3x9 word3x10 word3x11 word3x12",
+   "language": "en"
+  },
+  {
+   "start": 12.0,
+   "end": 12.94,
+   "text": "word4x0",
+   "language": "en"
+  },
+  {
+   "start": 14.0,
+   "end": 15.0,
+   "text": "word5x0 word5x1",
+   "language": "en"
+  },
+  {
+   "start": 15.0,
+   "end": 19.0,
+   "text": "word6x0 word6x1 word6x2 word6x3 word6x4 word6x5 word6x6 word6x7 word6x8 word6x9 word6x10 word6x11 word6x12 word6x13 word6x14 word6x15",
+   "language": "en"
+  },
+  {
+   "start": 19.0,
+   "end": 22.0,
+   "text": "word7x0 word7x1 word7x2 word7x3 word7x4 word7x5 word7x6",
+   "language": "en"
+  },
+  {
+   "start": 22.0,
+   "end": 25.0,
+   "text": "word8x0 word8x1 word8x2 word8x3 word8x4 word8x5 word8x6 word8x7 word8x8 word8x9 word8x10 word8x11 word8x12 word8x13 word8x14 word8x15 word8x16",
+   "language": "en"
+  },
+  {
+   "start": 25.0,
+   "end": 27.0,
+   "text": "word9x0 word9x1 word9x2 word9x3 word9x4 word9x5 word9x6 word9x7",
+   "language": "en"
+  },
+  {
+   "start": 27.0,
+   "end": 29.0,
+   "text": "word10x0 word10x1 word10x2 word10x3 word10x4 word10x5 word10x6 word10x7",
+   "language": "en"
+  },
+  {
+   "start": 29.0,
+   "end": 31.0,
+   "text": "word11x0 word11x1 word11x2 word11x3 word11x4 word11x5",
+   "language": "en"
+  },
+  {
+   "start": 31.0,
+   "end": 33.0,
+   "text": "word12x0 word12x1 word12x2 word12x3",
+   "language": "en"
+  },
+  {
+   "start": 33.0,
+   "end": 33.51,
+   "text": "word13x0",
+   "language": "en"
+  }
+ ],
+ "language": "en",
+ "language_probability": 1.0,
+ "video_duration_sec": 33.5146875,
+ "segment_languages": [
+  {
+   "start": 0.0,
+   "end": 33.51,
+   "language": "en",
+   "confidence": 1.0
+  }
+ ],
+ "performance": {
+  "queue_sec": 8.17,
+  "isolation_sec": 0,
+  "inference_sec": 8.1
+ }
+}

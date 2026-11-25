@@ -1,0 +1,38 @@
+{
+  "id": "subtitle-sync",
+  "name": "Subtitle Sync",
+  "version": "0.1.0",
+  "author": "mandopatriot",
+  "description": "Lines up saved subtitles with the speech in the video, using your own Whisper server.",
+  "long_description": "When HolyArrs saves or upgrades a subtitle, subtitle-sync reads short pieces of the video's sound, asks your Whisper server what is said and when, and works out whether the subtitle is early, late or made for another frame rate. If it is sure, it uses HolyArrs's own Sync fix, so the old file goes to the holding folder and History shows the change. If it is not sure, or the subtitle is in another language than the sound, it leaves the subtitle alone and logs why. With word timings from the server it fixes small offsets precisely; with phrase timings only (INTEL-WHISPER today) it moves a subtitle only when it is off by 1 second or more.",
+  "how_it_works": [
+    "Approve the Library folders that hold your movies and shows (read only).",
+    "Set the Whisper server address, and add it as one of your own hosts.",
+    "Each saved or upgraded subtitle scoring under the threshold is checked.",
+    "To check titles by hand, list their ids in Check these titles and save.",
+    "Timing is most precise when your Whisper server returns word timings, as Faster-Whisper based engines do. Whisper Pro ASR's INTEL-WHISPER engine currently returns phrase timings only, which were off by up to half a second, so with it only subtitles off by 1 second or more are moved."
+  ],
+  "licence": "AGPL-3.0",
+  "category": "Subtitles",
+  "access": {
+    "hosts": [],
+    "folders": [
+      {"name": "movies", "mode": "read", "why": "Reads the sound of movie files and their subtitles. Nothing is written.", "required": false},
+      {"name": "shows", "mode": "read", "why": "Reads the sound of episode files and their subtitles. Nothing is written.", "required": false},
+      {"name": "more_movies", "mode": "read", "why": "Another Library folder of movies, such as 4K. Read only, like movies.", "required": false},
+      {"name": "more_shows", "mode": "read", "why": "Another Library folder of shows. Read only, like shows.", "required": false}
+    ],
+    "actions": ["library.read", "files.subtitles.change"],
+    "events": ["library.subtitle"]
+  },
+  "settings": [
+    {"key": "asr_url", "label": "Whisper server address", "type": "text", "default": "", "help": "Such as http://whisper.example.lan:9000. Add the same name and port as one of your own hosts for this plugin."},
+    {"key": "threshold_episodes", "label": "Shows: skip subtitles scoring at or above", "type": "number", "default": 96, "help": "HolyArrs score out of 100. Subtitles at or above this are trusted and never touched."},
+    {"key": "threshold_movies", "label": "Movies: skip subtitles scoring at or above", "type": "number", "default": 86, "help": "HolyArrs score out of 100. Subtitles at or above this are trusted and never touched."},
+    {"key": "jobs", "label": "Jobs at once", "type": "number", "default": 1, "help": "1 to 4."},
+    {"key": "job_timeout_minutes", "label": "Time limit per job (minutes)", "type": "number", "default": 180, "help": "1 to 1440."},
+    {"key": "check_titles", "label": "Check these titles", "type": "text", "default": "", "help": "Title ids, separated by commas. Saving runs them once, skipping the score threshold. Every other rule still applies."},
+    {"key": "check_only", "label": "Check only", "type": "toggle", "default": "false", "help": "Logs what it would change and changes nothing."}
+  ],
+  "min_app_version": "1.3.1"
+}
