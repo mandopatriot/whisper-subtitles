@@ -222,13 +222,19 @@ func (m *maker) make(ctx context.Context, r makeReq) ([]byte, error) {
 	name := filepath.Base(r.Path)
 	var segs []tSeg
 	var dropped, fillers int
-	start, i := int64(0), 0
+	start, i, reused := int64(0), 0, 0
 	for start < dur {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		ch, ok := m.cache.chunk(id, i)
-		if !ok || ch.Start != start {
+		if ok && ch.Start == start {
+			reused++
+		} else {
+			if reused > 0 && reused == i {
+				m.logf("%s, %s: resuming at chunk %d of about %d (%s); %d chunks reused from before",
+					name, k.Lang, i+1, (dur+m.piece()-1)/m.piece(), srtStamp(start), reused)
+			}
 			ch, err = m.chunk(ctx, v, t, k.Lang, start, dur, segs)
 			if err != nil {
 				return nil, fmt.Errorf("%s, %s, chunk %d at %s: %w", name, k.Lang, i+1, srtStamp(start), err)
@@ -244,6 +250,9 @@ func (m *maker) make(ctx context.Context, r makeReq) ([]byte, error) {
 		fillers += countNote(ch.Notes, fillerNote)
 		segs = append(segs, ch.Segs...)
 		start, i = ch.Next, i+1
+	}
+	if reused > 0 && reused == i {
+		m.logf("%s, %s: all %d chunks reused from before", name, k.Lang, reused)
 	}
 	body, n, err := buildSRT(segs, dur)
 	if err != nil {

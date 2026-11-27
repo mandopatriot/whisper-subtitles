@@ -27,7 +27,9 @@ const (
 	cueLines     = 2
 	cueMaxMs     = 7_000
 	cueMinMs     = 1_000
-	cueGapMs     = 50 // kept between a lengthened cue and the next
+	// cueGapMs is kept between a cue and the next: HolyArrs's subtext.MinGapMS,
+	// two frames at 23.976 fps, so its overlap cleanup has nothing to change.
+	cueGapMs = 84
 	// loopRun is how many times the same line in a row counts as Whisper
 	// looping; only the first is kept. Two in a row ("No. No.") stay.
 	loopRun = 3

@@ -29,6 +29,7 @@ const (
 type asrQueue struct {
 	mu      sync.Mutex
 	busy    bool
+	holder  asrPrio // what holds the slot while busy
 	waiting [nPrios][]chan struct{}
 
 	until      time.Time
@@ -45,7 +46,14 @@ func newASRQueueWith(first, max time.Duration) *asrQueue {
 // acquire waits for the upload slot and any pause after a timeout. The
 // caller must call release once its upload is done.
 func (q *asrQueue) acquire(ctx context.Context, p asrPrio) (release func(), err error) {
-	if err := q.take(ctx, p); err != nil {
+	return q.acquireNoting(ctx, p, nil)
+}
+
+// acquireNoting is acquire that calls waiting, before it blocks, with what
+// holds the slot and how many uploads go first, counting that one. waiting
+// is not called when the slot is free.
+func (q *asrQueue) acquireNoting(ctx context.Context, p asrPrio, waiting func(holder asrPrio, ahead int)) (release func(), err error) {
+	if err := q.take(ctx, p, waiting); err != nil {
 		return nil, err
 	}
 	// The slot is held while a pause runs out, so the order is kept.
@@ -57,19 +65,26 @@ func (q *asrQueue) acquire(ctx context.Context, p asrPrio) (release func(), err 
 	return func() { once.Do(q.release) }, nil
 }
 
-func (q *asrQueue) take(ctx context.Context, p asrPrio) error {
+func (q *asrQueue) take(ctx context.Context, p asrPrio, waiting func(holder asrPrio, ahead int)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	q.mu.Lock()
 	if !q.busy && q.aheadLocked(p) == 0 {
-		q.busy = true
+		q.busy, q.holder = true, p
 		q.mu.Unlock()
 		return nil
+	}
+	holder, ahead := q.holder, q.aheadLocked(p)
+	if q.busy {
+		ahead++
 	}
 	ch := make(chan struct{})
 	q.waiting[p] = append(q.waiting[p], ch)
 	q.mu.Unlock()
+	if waiting != nil {
+		waiting(holder, ahead)
+	}
 	select {
 	case <-ch:
 		return nil
@@ -106,6 +121,7 @@ func (q *asrQueue) release() {
 		if len(q.waiting[p]) > 0 {
 			ch := q.waiting[p][0]
 			q.waiting[p] = q.waiting[p][1:]
+			q.holder = asrPrio(p)
 			close(ch) // busy stays true: the slot passes straight on
 			return
 		}
@@ -129,6 +145,13 @@ func (q *asrQueue) waitPause(ctx context.Context) error {
 		case <-t.C:
 		}
 	}
+}
+
+func (p asrPrio) String() string {
+	if p == prioMake {
+		return "a subtitle being written"
+	}
+	return "another sync"
 }
 
 // timedOut starts or doubles the pause and returns it.

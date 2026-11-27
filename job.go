@@ -117,7 +117,7 @@ func (k *checker) check(ctx context.Context, c Candidate, loc Located) error {
 	if !ch.Untagged {
 		lang = media.BaseLanguage(ch.Track.Language)
 	}
-	wins, err := k.listen(ctx, v, ch.Track, lang)
+	wins, err := k.listen(ctx, c.String(), v, ch.Track, lang)
 	if err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func (k *checker) check(ctx context.Context, c Candidate, loc Located) error {
 // listen sends the windows of track t to Whisper and returns what it heard
 // in each. A window too short, empty or failed counts as failed; an upload
 // that got no answer in time ends the check, since the server may be stuck.
-func (k *checker) listen(ctx context.Context, v video, t media.Track, lang string) ([]WindowText, error) {
+func (k *checker) listen(ctx context.Context, who string, v video, t media.Track, lang string) ([]WindowText, error) {
 	durMs := int64(media.WindowMs)
 	if t.BPS > 0 {
 		durMs = min(durMs, uploadCapBytes*8*1000/t.BPS)
@@ -158,11 +158,11 @@ func (k *checker) listen(ctx context.Context, v video, t media.Track, lang strin
 		return nil, fmt.Errorf("%w: the video's duration is unknown", errRule)
 	}
 	wins := make([]WindowText, 0, len(starts))
-	for _, st := range starts {
+	for i, st := range starts {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		w := k.window(ctx, v, t, st, durMs, lang)
+		w := k.window(ctx, fmt.Sprintf("%s, window %d of %d", who, i+1, len(starts)), v, t, st, durMs, lang)
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -175,8 +175,8 @@ func (k *checker) listen(ctx context.Context, v video, t media.Track, lang strin
 }
 
 // window cuts one window to a file in the data folder, uploads it and
-// removes the file.
-func (k *checker) window(ctx context.Context, v video, t media.Track, startMs, durMs int64, lang string) WindowText {
+// removes the file. who names it in the log when it waits for the slot.
+func (k *checker) window(ctx context.Context, who string, v video, t media.Track, startMs, durMs int64, lang string) WindowText {
 	f, err := newWindowFile(k.dataDir)
 	if err != nil {
 		return WindowText{BaseMs: startMs, Err: err}
@@ -194,9 +194,20 @@ func (k *checker) window(ctx context.Context, v video, t media.Track, startMs, d
 	case win.Capped && win.DurationMs() < minWindowMs:
 		return WindowText{BaseMs: win.BaseMs, Err: fmt.Errorf("only %d ms fit in %d MiB", win.DurationMs(), uploadCapBytes>>20)}
 	}
-	release, err := k.queue.acquire(ctx, prioSync)
+	var waitFrom time.Time
+	release, err := k.queue.acquireNoting(ctx, prioSync, func(holder asrPrio, ahead int) {
+		waitFrom = time.Now()
+		goes := fmt.Sprintf("%d uploads go", ahead)
+		if ahead == 1 {
+			goes = "1 upload goes"
+		}
+		k.logf("%s: waiting for the Whisper slot, held by %s (%s first)", who, holder, goes)
+	})
 	if err != nil {
 		return WindowText{BaseMs: win.BaseMs, Err: err}
+	}
+	if !waitFrom.IsZero() {
+		k.logf("%s: got the Whisper slot after %s", who, time.Since(waitFrom).Round(100*time.Millisecond))
 	}
 	tr, err := k.asr.Transcribe(ctx, f.Name(), lang)
 	release()

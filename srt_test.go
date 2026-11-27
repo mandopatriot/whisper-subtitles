@@ -215,8 +215,31 @@ func TestBuildSRTWrapAndMinimum(t *testing.T) {
 	if lines := strings.Split(cues[0].Text, "\n"); len(lines) != 2 || strings.Join(lines, " ") != text {
 		t.Errorf("wrap: %q", cues[0].Text)
 	}
-	if cues[1].EndMs != 3850 {
-		t.Errorf("short cue ends at %d, want 3850 (lengthened, then a gap before the next)", cues[1].EndMs)
+	if cueGapMs != 84 {
+		t.Fatalf("cueGapMs %d: must match HolyArrs's subtext.MinGapMS (84)", cueGapMs)
+	}
+	if cues[1].EndMs != 3816 {
+		t.Errorf("short cue ends at %d, want 3816 (lengthened, then 84 ms before the next)", cues[1].EndMs)
+	}
+}
+
+// Whisper's own gaps under 84 ms are widened to 84, as HolyArrs's cleanup
+// would; a cue with no room for the gap ends where the next starts.
+func TestBuildSRTGap(t *testing.T) {
+	b, _, err := buildSRT([]tSeg{seg(0, 1920, "One line."), seg(2000, 3000, "Two lines."), seg(3030, 3050, "Three."), seg(3060, 4500, "Four.")}, 60_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cues := parseSRTBack(t, b)
+	for i, want := range []int64{1916, 2946, 3060} {
+		if cues[i].EndMs != want {
+			t.Errorf("cue %d ends at %d, want %d", i+1, cues[i].EndMs, want)
+		}
+	}
+	for i := 0; i+1 < len(cues); i++ {
+		if g := cues[i+1].StartMs - cues[i].EndMs; g < 0 || (g < cueGapMs && cues[i+1].StartMs-cueGapMs > cues[i].StartMs) {
+			t.Errorf("gap after cue %d is %d ms", i+1, g)
+		}
 	}
 }
 

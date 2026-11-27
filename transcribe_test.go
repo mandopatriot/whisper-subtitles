@@ -286,6 +286,9 @@ func TestMakeResumes(t *testing.T) {
 	if _, err := r.run(); !errors.Is(err, ErrASR) || !strings.Contains(err.Error(), "chunk 4") {
 		t.Fatalf("got %v", err)
 	}
+	if strings.Contains(r.log.String(), "resuming") {
+		t.Errorf("a first make logged a resume: %s", r.log)
+	}
 	r.av.onCall = nil
 	r.av.reads = nil
 	b, err := r.run()
@@ -295,6 +298,10 @@ func TestMakeResumes(t *testing.T) {
 	wantEveryLine(t, b, 2*3_600_000)
 	if want := int(2*3_600_000/chunkMs) - 3; len(r.av.reads) != want || r.av.reads[0].from != 3*chunkMs-chunkPadMs {
 		t.Errorf("resumed with %d reads from %+v, want %d from chunk 4", len(r.av.reads), r.av.reads[0], want)
+	}
+	want := fmt.Sprintf("Film (2020).mkv, en: resuming at chunk 4 of about %d (00:04:30,000); 3 chunks reused from before\n", 2*3_600_000/chunkMs)
+	if strings.Count(r.log.String(), "resuming") != 1 || !strings.Contains(r.log.String(), want) {
+		t.Errorf("log: %s\nwant %q", r.log, want)
 	}
 }
 
@@ -325,6 +332,14 @@ func TestMakeNoSpeechError(t *testing.T) {
 	r.m.asr = silentASR{}
 	if _, err := r.run(); !errors.Is(err, errNoSpeech) || !strings.Contains(err.Error(), "in en") {
 		t.Fatalf("got %v", err)
+	}
+	// Asked again, every chunk is already written: none is sent again.
+	r.m.asr = r.av
+	if _, err := r.run(); !errors.Is(err, errNoSpeech) || r.av.calls != 0 {
+		t.Fatalf("got %v after %d uploads", err, r.av.calls)
+	}
+	if want := fmt.Sprintf("all %d chunks reused from before", 3_600_000/chunkMs); !strings.Contains(r.log.String(), want) || strings.Contains(r.log.String(), "resuming") {
+		t.Errorf("log: %s", r.log)
 	}
 }
 

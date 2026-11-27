@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -389,6 +390,34 @@ func TestCheckWindowLengthByBitrate(t *testing.T) {
 		if len(av.extract) == 0 || av.extract[0].dur != c.durMs {
 			t.Errorf("%d b/s: windows %+v, want %d ms", c.bps, av.extract, c.durMs)
 		}
+	}
+}
+
+// A sync window behind a make's upload logs that it waits and when it gets
+// the slot; a window that finds it free logs nothing about it.
+func TestCheckLogsSlotWait(t *testing.T) {
+	cues := film(31, filmMs)
+	r := newRig(t, newFakeAV(cues, 1, 2500), cues)
+	hold, err := r.k.queue.acquire(context.Background(), prioMake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errc := make(chan error, 1)
+	go func() { errc <- r.run() }()
+	waitQueued(t, r.k.queue, prioSync, 1)
+	time.Sleep(200 * time.Millisecond)
+	hold()
+	if err := <-errc; err != nil {
+		t.Fatal(err)
+	}
+	log := r.log.String()
+	n := len(media.WindowStarts(filmMs))
+	wait := fmt.Sprintf("subtitle 700 (en, Film/Film.en.srt), window 1 of %d: waiting for the Whisper slot, held by a subtitle being written (1 upload goes first)\n", n)
+	if !strings.Contains(log, wait) || !regexp.MustCompile(fmt.Sprintf(`window 1 of %d: got the Whisper slot after ([2-9]00ms|[0-9.]+s)\n`, n)).MatchString(log) {
+		t.Errorf("log: %s", log)
+	}
+	if strings.Count(log, "Whisper slot") != 2 {
+		t.Errorf("windows that found the slot free logged it: %s", log)
 	}
 }
 

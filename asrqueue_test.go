@@ -52,6 +52,48 @@ func waitQueued(t *testing.T, q *asrQueue, p asrPrio, n int) {
 	})
 }
 
+// The wait hook says what holds the slot and how many go first, and is not
+// called when the slot is free.
+func TestASRQueueNotesWait(t *testing.T) {
+	q := newASRQueue()
+	called := false
+	free, err := q.acquireNoting(context.Background(), prioSync, func(asrPrio, int) { called = true })
+	if err != nil || called {
+		t.Fatalf("free slot: err %v, hook called %v", err, called)
+	}
+	free()
+	hold, _ := q.acquire(context.Background(), prioMake)
+	type note struct {
+		holder asrPrio
+		ahead  int
+	}
+	notes := make(chan note, 2)
+	done := make(chan struct{})
+	for i := 0; i < 2; i++ {
+		go func() {
+			release, err := q.acquireNoting(context.Background(), prioSync, func(h asrPrio, a int) { notes <- note{h, a} })
+			if err == nil {
+				release()
+			}
+			done <- struct{}{}
+		}()
+		waitQueued(t, q, prioSync, i+1)
+	}
+	a, b := <-notes, <-notes
+	if a.ahead > b.ahead {
+		a, b = b, a // the hooks run outside the lock, in either order
+	}
+	if a != (note{prioMake, 1}) || b != (note{prioMake, 2}) {
+		t.Errorf("waiters noted %+v and %+v, want a make holding with 1 and 2 first", a, b)
+	}
+	if prioMake.String() != "a subtitle being written" || prioSync.String() != "another sync" {
+		t.Error("holder names")
+	}
+	hold()
+	<-done
+	<-done
+}
+
 // A waiting make goes before syncs that waited longer; each kind keeps its
 // own order.
 func TestASRQueueMakesFirst(t *testing.T) {
