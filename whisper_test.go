@@ -250,7 +250,7 @@ func TestTranscribeRetries(t *testing.T) {
 		if err != nil && !errors.Is(err, ErrASR) {
 			t.Errorf("answers %v: %v is not ErrASR", c.status, err)
 		}
-		if down := c.status[0] >= 502 && c.status[0] <= 504; errors.Is(err, errASRDown) != down || errors.Is(err, errASRTimeout) {
+		if down := c.status[0] >= 502 && c.status[0] <= 504; errors.Is(err, errASRDown) != down || errors.Is(err, errASRGateway) != down || errors.Is(err, errASRTimeout) {
 			t.Errorf("answers %v: %v; down should be %v", c.status, err, down)
 		}
 	}
@@ -267,7 +267,7 @@ func TestTranscribeUnreachable(t *testing.T) {
 		w.RetryWait = time.Hour
 		start := time.Now()
 		_, err := w.Transcribe(context.Background(), windowFile(t, []byte("mka")), "")
-		if !errors.Is(err, errASRDown) || errors.Is(err, errASRTimeout) || time.Since(start) > 10*time.Second {
+		if !errors.Is(err, errASRDown) || errors.Is(err, errASRGateway) || errors.Is(err, errASRTimeout) || time.Since(start) > 10*time.Second {
 			t.Errorf("%s: %v after %s; want errASRDown at once", base, err, time.Since(start))
 		}
 	}

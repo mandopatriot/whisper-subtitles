@@ -68,8 +68,10 @@ func (q *asrQueue) watchDown(probe func(context.Context) error, logf func(string
 }
 
 // send runs do, one upload, with the slot held. While the server can't be
-// reached it waits until it answers and sends again; giveUp, when not nil,
-// is when to stop waiting and return errASRDown.
+// reached it waits until it answers and sends again. A 502, 503 or 504
+// while GET /asr answers is a busy server: returned as errASRTimeout, for
+// the backoff. giveUp, when not nil, is when to stop waiting and return
+// errASRDown.
 func (q *asrQueue) send(ctx context.Context, p asrPrio, waiting func(asrPrio, int), giveUp func() time.Time, do func() error) error {
 	for {
 		if err := q.waitUp(ctx, giveUp); err != nil {
@@ -83,6 +85,10 @@ func (q *asrQueue) send(ctx context.Context, p asrPrio, waiting func(asrPrio, in
 		release()
 		if !errors.Is(err, errASRDown) || q.probe == nil || ctx.Err() != nil {
 			return err
+		}
+		if errors.Is(err, errASRGateway) && q.probe(ctx) == nil {
+			// Up but busy: a timeout, with its backoff, not an outage.
+			return fmt.Errorf("%w (%v, but GET /asr answers: the server is busy)", errASRTimeout, err)
 		}
 		q.wentDown(err)
 	}

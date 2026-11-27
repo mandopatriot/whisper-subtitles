@@ -563,3 +563,27 @@ func TestCheckWaitsForWhisper(t *testing.T) {
 		t.Errorf("log: %s", l)
 	}
 }
+
+// A sync whose upload gets a 504 while GET /asr answers ends as a timeout
+// and starts the backoff, like an upload with no answer.
+func TestCheckGatewayBusyBacksOff(t *testing.T) {
+	cues := film(35, filmMs)
+	r := newRig(t, newFakeAV(cues, 1, 2500), cues)
+	d := &downServer{}
+	d.up.Store(true)
+	r.k.queue.watchDown(d.probe, r.k.logf)
+	r.av.onCall = func(n int) error {
+		if n == 3 {
+			return fmt.Errorf("%w 504 for http://whisper.test:9000: Gateway Timeout", errASRGateway)
+		}
+		return nil
+	}
+	err := r.run()
+	if !errors.Is(err, errASRTimeout) || r.av.calls != 3 {
+		t.Fatalf("got %v after %d uploads; want a timeout after 3", err, r.av.calls)
+	}
+	r.noSync(t)
+	if l := r.log.String(); !strings.Contains(l, "no uploads for 5m0s") || strings.Contains(l, "went away") {
+		t.Errorf("log: %s", l)
+	}
+}

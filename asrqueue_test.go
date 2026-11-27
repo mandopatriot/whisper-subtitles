@@ -305,3 +305,34 @@ func TestASRQueueDownGiveUp(t *testing.T) {
 		t.Errorf("without watchDown: %v after %d", err, calls)
 	}
 }
+
+// A 502, 503 or 504 while GET /asr answers is a busy server: a timeout at
+// once, for the backoff, with nothing marked away. When GET /asr fails too,
+// it is away and uploads wait.
+func TestASRQueueGatewayBusyOrAway(t *testing.T) {
+	gw := fmt.Errorf("%w 504 for http://whisper.test:9000: Gateway Timeout", errASRGateway)
+	d, log := &downServer{}, &syncBuf{}
+	d.up.Store(true)
+	q := downQueue(d, log)
+	calls := 0
+	err := q.send(context.Background(), prioMake, nil, nil, func() error { calls++; return gw })
+	if !errors.Is(err, errASRTimeout) || errors.Is(err, errASRDown) || calls != 1 || q.down || d.probes.Load() != 1 {
+		t.Errorf("busy: %v after %d sends and %d probes, down %v", err, calls, d.probes.Load(), q.down)
+	}
+	if !strings.Contains(err.Error(), "GET /asr answers: the server is busy") || strings.Contains(log.String(), "went away") {
+		t.Errorf("busy: %v; log %s", err, log)
+	}
+	d.up.Store(false)
+	calls = 0
+	go func() { time.Sleep(100 * time.Millisecond); d.up.Store(true) }()
+	err = q.send(context.Background(), prioMake, nil, nil, func() error {
+		calls++
+		if calls == 1 {
+			return gw
+		}
+		return nil
+	})
+	if err != nil || calls != 2 || strings.Count(log.String(), "went away") != 1 || strings.Count(log.String(), "is back after") != 1 {
+		t.Errorf("away: %v after %d sends; log %s", err, calls, log)
+	}
+}

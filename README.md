@@ -91,14 +91,16 @@ server sends them.
 ## When the Whisper server is away
 
 If the server can't be reached (connection refused, its name doesn't
-resolve, or a 502, 503 or 504 from a proxy in front of it), nothing fails:
+resolve, or a 502, 503 or 504 from a proxy in front of it while `GET /asr`
+fails too), nothing fails:
 uploads stop, the plugin tries `GET /asr` every 30 seconds, and both
 writing and syncing carry on as soon as it answers. The log says once when
 it went away and once when it is back. A subtitle being written keeps its
 finished pieces, and fails only if the server is still away when HolyArrs
 stops waiting for it (an hour after it asked). A server that took an upload
-and never answered is different: uploads then pause for 5 minutes, doubling
-up to an hour.
+and never answered is different, and so is a 502, 503 or 504 while `GET
+/asr` answers at once (the server is up but busy): uploads then pause for 5
+minutes, doubling up to an hour.
 
 ## Setup
 

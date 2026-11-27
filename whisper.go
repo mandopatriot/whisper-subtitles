@@ -127,6 +127,16 @@ var errASRTimeout = fmt.Errorf("%w: no answer within the upload time limit", Err
 // failing.
 var errASRDown = fmt.Errorf("%w: the server can't be reached", ErrASR)
 
+// errASRGateway is a 502, 503 or 504 from a proxy in front of the server.
+// It is errASRDown, unless GET /asr answers at once: then the server is up
+// but busy, and the upload counts as a timeout (asrQueue.send).
+var errASRGateway error = gatewayError{}
+
+type gatewayError struct{}
+
+func (gatewayError) Error() string   { return "whisper: a proxy in front of the server answered" }
+func (gatewayError) Is(t error) bool { return t == errASRDown || t == ErrASR }
+
 // isUnreachable says whether err happened before the server took the
 // upload: dialling the server or the proxy, or looking up its name.
 func isUnreachable(err error) bool {
@@ -263,7 +273,7 @@ func (w *Whisper) transcribeOnce(ctx context.Context, hc *http.Client, path, lan
 		}
 		switch resp.StatusCode {
 		case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-			return tr, false, fmt.Errorf("%w (%s answered %d: %s)", errASRDown, w.Base, resp.StatusCode, msg)
+			return tr, false, fmt.Errorf("%w %d for %s: %s", errASRGateway, resp.StatusCode, w.Base, msg)
 		}
 		return tr, false, fmt.Errorf("%w: %s answered %d: %s", ErrASR, w.Base, resp.StatusCode, msg)
 	}
