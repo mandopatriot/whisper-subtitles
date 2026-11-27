@@ -53,10 +53,10 @@ func truthFor(src string) evalTruth {
 	return evalTruth{1, 0, 0, 0, 100}
 }
 
-// TestFitEval runs the fit on every file of $SUBTITLE_SYNC_EVAL_INDEX (cut by
+// TestFitEval runs the fit on every file of $WHISPER_SUBTITLES_EVAL_INDEX (cut by
 // TestRealFiles, transcribed by TestTranscribeWindows with the same
-// $SUBTITLE_SYNC_EVAL_TAG) with its English subtitle from
-// $SUBTITLE_SYNC_EVAL_SUBS, else $SUBTITLE_SYNC_LIB (read only), four ways: as is, shifted +2.5 s
+// $WHISPER_SUBTITLES_EVAL_TAG) with its English subtitle from
+// $WHISPER_SUBTITLES_EVAL_SUBS, else $WHISPER_SUBTITLES_LIB (read only), four ways: as is, shifted +2.5 s
 // and -1.2 s, and changed from 23.976 to 25 fps. The wanted fix is the shift
 // undone on top of the file's truth (truthFor).
 //
@@ -66,9 +66,9 @@ func truthFor(src string) evalTruth {
 // as-is reading plus the shift. As is, a subtitle in sync must not be
 // synced.
 func TestFitEval(t *testing.T) {
-	index, subsDir := os.Getenv("SUBTITLE_SYNC_EVAL_INDEX"), os.Getenv("SUBTITLE_SYNC_EVAL_SUBS")
+	index, subsDir := os.Getenv("WHISPER_SUBTITLES_EVAL_INDEX"), os.Getenv("WHISPER_SUBTITLES_EVAL_SUBS")
 	if index == "" || subsDir == "" {
-		t.Skip("set SUBTITLE_SYNC_EVAL_INDEX and SUBTITLE_SYNC_EVAL_SUBS")
+		t.Skip("set WHISPER_SUBTITLES_EVAL_INDEX and WHISPER_SUBTITLES_EVAL_SUBS")
 	}
 	lib := testLibrary(t)
 	idx, err := readEvalIndex(index)
@@ -115,7 +115,7 @@ func TestFitEval(t *testing.T) {
 	fails := 0
 	fmt.Println("RESULT\tfile\tvariant\tpass\twant\tgot\terror ms\tdetail")
 	for _, src := range order {
-		// A subtitle in $SUBTITLE_SYNC_EVAL_SUBS wins over the library's, so
+		// A subtitle in $WHISPER_SUBTITLES_EVAL_SUBS wins over the library's, so
 		// a reference stays fixed when the library's file changes (as 300's
 		// did when it was really synced).
 		stem := strings.TrimSuffix(src, filepath.Ext(src))

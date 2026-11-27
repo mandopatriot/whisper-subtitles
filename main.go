@@ -1,7 +1,15 @@
-// Command subtitle-sync is a HolyArrs plugin. When HolyArrs saves or upgrades a
-// subtitle, it reads short pieces of the video's sound, asks the owner's
-// Whisper server what is said and when, fits one offset and an optional
-// frame-rate change, and calls HolyArrs's own Sync fix when the fit is sure.
+// Command whisper-subtitles is a HolyArrs plugin with two jobs, sharing the
+// owner's Whisper server one upload at a time.
+//
+// As a subtitle site (sources.subtitles) it offers a subtitle for each
+// wanted language spoken in a tagged dialogue track, and when HolyArrs picks
+// one it sends that track to Whisper in chunks and answers with an SRT.
+//
+// As a sync tool, when HolyArrs saves or upgrades a subtitle, it reads short
+// pieces of the video's sound, asks Whisper what is said and when, fits one
+// offset and an optional frame-rate change, and calls HolyArrs's own Sync
+// fix when the fit is sure.
+//
 // It reads events on standard input, keeps its state in HOLYARRS_PLUGIN_DATA
 // and stops cleanly on SIGTERM or when standard input ends.
 package main
@@ -39,6 +47,10 @@ type app struct {
 	st       State
 	inFlight map[Job]bool
 	wake     chan struct{}
+
+	// site is the subtitle site, nil when transcribe is off or there is no
+	// Whisper address.
+	site *siteServer
 }
 
 func newApp(dataDir string, set Settings, ha *HolyArrs, folders []Folder, out io.Writer) (*app, error) {
@@ -49,9 +61,18 @@ func newApp(dataDir string, set Settings, ha *HolyArrs, folders []Folder, out io
 	a := &app{dataDir: dataDir, set: set, ha: ha, folders: folders, out: out,
 		st: st, inFlight: map[Job]bool{}, wake: make(chan struct{}, 1),
 		jobTimeout: time.Duration(set.JobTimeoutMinutes) * time.Minute}
-	k := &checker{ha: ha, gate: newASRGate(), dataDir: dataDir, checkOnly: set.CheckOnly, logf: a.logf, open: openVideo}
+	// One queue for every upload: sync and transcription never reach the
+	// server at once.
+	q := newASRQueue()
+	k := &checker{ha: ha, queue: q, dataDir: dataDir, checkOnly: set.CheckOnly, logf: a.logf, open: openVideo}
 	if set.ASRURL != "" {
-		k.asr = newWhisper(set.ASRURL)
+		w := newWhisper(set.ASRURL)
+		k.asr = w
+		if set.Transcribe {
+			s := &searcher{set: set, folders: folders, tracks: newTrackCache(openVideo), wait: searchWait, logf: a.logf}
+			mk := &maker{dataDir: dataDir, folders: folders, open: openVideo, asr: w, queue: q, cache: newMadeCache(dataDir), logf: a.logf}
+			a.site = newSiteServer(ha, s, mk, a.logf, a.jobTimeout)
+		}
 	}
 	a.check = k.check // with no address no worker runs, so it is never called
 	return a, nil
@@ -84,6 +105,10 @@ func (a *app) queueCheckTitles() {
 	if a.set.CheckTitlesRaw == "" || a.set.CheckTitlesRaw == a.st.CheckTitlesDone {
 		return
 	}
+	if !a.set.Sync {
+		fmt.Fprintln(a.out, "check_titles: sync is off; nothing queued")
+		return
+	}
 	for _, id := range a.set.CheckTitles {
 		if d := a.st.push(Job{TitleID: id, Manual: true}); d != nil {
 			fmt.Fprintf(a.out, "queue full: dropped %s\n", d)
@@ -100,6 +125,10 @@ func (a *app) handleLine(raw []byte) {
 	defer a.mu.Unlock()
 	before := a.st.Highest
 	j, err := a.st.readEvent(raw)
+	if j != nil && !a.set.Sync {
+		fmt.Fprintf(a.out, "sync is off; %s not checked\n", j)
+		j = nil
+	}
 	switch {
 	case j != nil:
 		if d := a.st.push(*j); d != nil {
@@ -217,8 +246,12 @@ func (a *app) run(ctx context.Context, r io.Reader) error {
 	a.queueCheckTitles()
 	var wg sync.WaitGroup
 	workers := a.set.Jobs
-	if a.set.ASRURL == "" {
+	if a.set.ASRURL == "" || !a.set.Sync {
 		workers = 0 // jobs wait in the queue until the address is set
+	}
+	if a.site != nil {
+		wg.Add(1)
+		go func() { defer wg.Done(); a.site.run(ctx) }()
 	}
 	for range workers {
 		wg.Add(1)
@@ -276,7 +309,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
 	fail := func(err error) {
-		fmt.Fprintln(os.Stderr, "subtitle-sync:", err)
+		fmt.Fprintln(os.Stderr, "whisper-subtitles:", err)
 		os.Exit(1)
 	}
 	set, warns := readSettings(os.Getenv)
@@ -299,14 +332,17 @@ func main() {
 	// only makes the collector work harder if something grows.
 	debug.SetMemoryLimit(256 << 20)
 	cleanWindowFiles(dataDir) // windows a stop left behind
+	if err := newMadeCache(dataDir).prune(); err != nil {
+		fmt.Println("cleaning the data folder:", err)
+	}
 	a, err := newApp(dataDir, set, ha, folders, os.Stdout)
 	if err != nil {
 		fail(err)
 	}
-	a.logf("subtitle-sync started: %d folders, %d jobs at once, check only %t, %d jobs waiting",
-		len(folders), set.Jobs, set.CheckOnly, len(a.st.Pending))
+	a.logf("whisper-subtitles started: %d folders, sync %t (%d jobs at once, check only %t, %d jobs waiting), subtitle site %t",
+		len(folders), set.Sync, set.Jobs, set.CheckOnly, len(a.st.Pending), a.site != nil)
 	if set.ASRURL == "" {
-		a.logf("set the Whisper server address before subtitles can be checked")
+		a.logf("set the Whisper server address before subtitles can be checked or written")
 	} else if err := newWhisper(set.ASRURL).Ready(ctx); err != nil {
 		a.logf("%v; jobs wait and try when they run (add the server as one of your own hosts)", err)
 	} else {
@@ -315,5 +351,5 @@ func main() {
 	if err := a.run(ctx, os.Stdin); err != nil {
 		fail(fmt.Errorf("reading events: %w", err))
 	}
-	a.logf("subtitle-sync stopped")
+	a.logf("whisper-subtitles stopped")
 }

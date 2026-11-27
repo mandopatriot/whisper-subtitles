@@ -71,6 +71,7 @@ func testApp(t *testing.T, set Settings, dataDir string) (*app, *syncBuf) {
 func readySettings() Settings {
 	s := defaults()
 	s.ASRURL = "http://whisper.test:9000"
+	s.Transcribe = false // the subtitle site has its own tests (hook_test.go)
 	return s
 }
 
@@ -346,5 +347,35 @@ func TestHolyArrsErrors(t *testing.T) {
 	ha.Token = "tok"
 	if _, err := ha.TitleSubtitles(context.Background(), 42); err != nil {
 		t.Errorf("with HTTP_PROXY set: %v", err)
+	}
+}
+
+// With sync off, events and check_titles queue nothing, but the event ids
+// still move on so they are not checked later.
+func TestRunSyncOff(t *testing.T) {
+	dir := t.TempDir()
+	set := readySettings()
+	set.Sync = false
+	set.CheckTitlesRaw, set.CheckTitles = "42", []int64{42}
+	a, log := testApp(t, set, dir)
+	a.check = func(ctx context.Context, c Candidate, loc Located) error {
+		t.Errorf("checked %s with sync off", c)
+		return nil
+	}
+	pr, pw := io.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- a.run(context.Background(), pr) }()
+	io.WriteString(pw, arrivalLine)
+	waitFor(t, "the event to be read", func() bool { return strings.Contains(log.String(), "sync is off; event 5120") })
+	pw.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	st, _ := loadState(dir)
+	if st.Highest != 5120 || len(st.Pending) != 0 || st.CheckTitlesDone != "" {
+		t.Errorf("saved state %+v", st)
+	}
+	if !strings.Contains(log.String(), "check_titles: sync is off") {
+		t.Errorf("log:\n%s", log)
 	}
 }

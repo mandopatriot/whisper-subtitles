@@ -24,6 +24,9 @@ func (c Candidate) String() string {
 	return fmt.Sprintf("subtitle %d (%s, %s)", c.SubtitleID, c.Language, c.SubRel)
 }
 
+// madeTranscribed is SubRow.Made for a subtitle written from the audio.
+const madeTranscribed = "transcribed"
+
 // retimeFormats are the formats HolyArrs's Sync can change (subtext.Retime).
 var retimeFormats = map[string]bool{"srt": true, "vtt": true, "ass": true, "ssa": true}
 
@@ -47,6 +50,10 @@ func checkRow(r SubRow, kind string, set Settings, manual bool) error {
 		return rule("HolyArrs did not save it (origin %s)", r.Origin)
 	case len(r.Sync) > 0:
 		return rule("its timing was already changed once")
+	case r.Made != nil && *r.Made == madeTranscribed:
+		// Written from this video's own audio: its timing already is the
+		// audio's, and checking it would only keep the server busy.
+		return rule("it was written from the audio")
 	}
 	if f := format(*r.RelativePath); !retimeFormats[f] {
 		return rule("HolyArrs can't change the timing of .%s files", f)

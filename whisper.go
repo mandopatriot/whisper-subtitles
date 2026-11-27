@@ -60,6 +60,9 @@ const (
 	// the usual 15 to 30 s for 90 s of audio. A near-silent window once hung
 	// the server in language detection; a call over this is not retried.
 	asrUploadTimeout = 10 * time.Minute
+	// asrChunkTimeout is one transcription chunk's call: up to 2 min of
+	// audio, which INTEL-WHISPER decodes in about 15 s.
+	asrChunkTimeout = 10 * time.Minute
 )
 
 // Whisper calls the owner's Whisper Pro ASR server through the plugin's
@@ -81,6 +84,10 @@ type Segment struct {
 	End   float64 `json:"end"`
 	Text  string  `json:"text"`
 	Words []Word  `json:"words"` // only from engines that give word timings
+	// NoSpeechProb and AvgLogprob are Whisper's own confidence, when the
+	// engine sends them (nil otherwise). Only transcription reads them.
+	NoSpeechProb *float64 `json:"no_speech_prob"`
+	AvgLogprob   *float64 `json:"avg_logprob"`
 }
 
 // Word is one word's timing within a segment, in seconds from the start of
@@ -144,10 +151,25 @@ func (w *Whisper) Ready(ctx context.Context) error {
 // failure or a 502, 503 or 504 is tried once more after RetryWait; a
 // timeout (errASRTimeout) and any other failure are returned at once.
 func (w *Whisper) Transcribe(ctx context.Context, path, lang string) (Transcript, error) {
+	return w.transcribe(ctx, w.HTTP, path, lang)
+}
+
+// TranscribeChunk is Transcribe for a transcription chunk, with its longer
+// time limit (asrChunkTimeout). The language is required.
+func (w *Whisper) TranscribeChunk(ctx context.Context, path, lang string) (Transcript, error) {
+	if lang == "" {
+		return Transcript{}, fmt.Errorf("%w: a transcription needs the audio's language", ErrASR)
+	}
+	c := *w.HTTP
+	c.Timeout = asrChunkTimeout
+	return w.transcribe(ctx, &c, path, lang)
+}
+
+func (w *Whisper) transcribe(ctx context.Context, hc *http.Client, path, lang string) (Transcript, error) {
 	if lang != "" && !validLang(lang) {
 		return Transcript{}, fmt.Errorf("%w: language %q is not a language code", ErrASR, lang)
 	}
-	tr, retry, err := w.transcribeOnce(ctx, path, lang)
+	tr, retry, err := w.transcribeOnce(ctx, hc, path, lang)
 	if err == nil || !retry {
 		return tr, err
 	}
@@ -156,11 +178,11 @@ func (w *Whisper) Transcribe(ctx context.Context, path, lang string) (Transcript
 		return Transcript{}, ctx.Err()
 	case <-time.After(w.RetryWait):
 	}
-	tr, _, err = w.transcribeOnce(ctx, path, lang)
+	tr, _, err = w.transcribeOnce(ctx, hc, path, lang)
 	return tr, err
 }
 
-func (w *Whisper) transcribeOnce(ctx context.Context, path, lang string) (tr Transcript, retry bool, err error) {
+func (w *Whisper) transcribeOnce(ctx context.Context, hc *http.Client, path, lang string) (tr Transcript, retry bool, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return tr, false, err
@@ -190,14 +212,14 @@ func (w *Whisper) transcribeOnce(ctx context.Context, path, lang string) (tr Tra
 	req.ContentLength = int64(len(head)) + fi.Size() + int64(len(tail))
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	req.Header.Set("Accept", "application/json")
-	resp, err := w.HTTP.Do(req)
+	resp, err := hc.Do(req)
 	pr.Close()
 	if err != nil {
 		if ctx.Err() != nil {
 			return tr, false, ctx.Err()
 		}
 		if isTimeout(err) {
-			return tr, false, fmt.Errorf("%w (%s): %v", errASRTimeout, w.HTTP.Timeout, err)
+			return tr, false, fmt.Errorf("%w (%s): %v", errASRTimeout, hc.Timeout, err)
 		}
 		return tr, true, fmt.Errorf("%w: upload to %s failed: %v", ErrASR, w.Base, err)
 	}
@@ -208,7 +230,7 @@ func (w *Whisper) transcribeOnce(ctx context.Context, path, lang string) (tr Tra
 			return tr, false, ctx.Err()
 		}
 		if isTimeout(err) {
-			return tr, false, fmt.Errorf("%w (%s): %v", errASRTimeout, w.HTTP.Timeout, err)
+			return tr, false, fmt.Errorf("%w (%s): %v", errASRTimeout, hc.Timeout, err)
 		}
 		return tr, true, fmt.Errorf("%w: reading the answer: %v", ErrASR, err)
 	}
@@ -276,6 +298,14 @@ func parseTranscript(body []byte) (Transcript, error) {
 	for i, s := range tr.Segments {
 		if !finite(s.Start) || !finite(s.End) || s.Start < 0 || s.End < s.Start {
 			return bad("segment %d runs %v to %v in %v s of audio", i, s.Start, s.End, tr.Duration)
+		}
+		// A confidence value out of its range is read as not sent, so it can
+		// never drop a segment; the rest of the answer stays usable for sync.
+		if p := s.NoSpeechProb; p != nil && (!finite(*p) || *p < 0 || *p > 1) {
+			s.NoSpeechProb = nil
+		}
+		if p := s.AvgLogprob; p != nil && (!finite(*p) || *p > 0) {
+			s.AvgLogprob = nil
 		}
 		if s.End > tr.Duration+overrunSlackSec {
 			tr.Overruns++

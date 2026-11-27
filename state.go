@@ -65,23 +65,7 @@ func (s State) save(dir string) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".state-*.json")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name()) // gone after the rename; cleans up on failure
-	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), filepath.Join(dir, stateFile))
+	return writeFileAtomic(dir, stateFile, b)
 }
 
 // push queues j. It returns the job dropped to make room, if any.

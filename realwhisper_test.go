@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"subtitle-sync/media"
+	"whisper-subtitles/media"
 )
 
 // evalWindow is one cached window transcript, next to its .mka as .json.
@@ -50,22 +50,22 @@ func readEvalIndex(path string) ([]evalWindow, error) {
 }
 
 // evalCache is where a window's transcript is cached: <window>.json, or
-// <window>.<tag>.json with $SUBTITLE_SYNC_EVAL_TAG set (one tag per server).
+// <window>.<tag>.json with $WHISPER_SUBTITLES_EVAL_TAG set (one tag per server).
 func evalCache(mka string) string {
-	if tag := os.Getenv("SUBTITLE_SYNC_EVAL_TAG"); tag != "" {
+	if tag := os.Getenv("WHISPER_SUBTITLES_EVAL_TAG"); tag != "" {
 		return mka + "." + tag + ".json"
 	}
 	return mka + ".json"
 }
 
 // TestTranscribeWindows transcribes every window listed in
-// $SUBTITLE_SYNC_EVAL_INDEX with the server at $SUBTITLE_SYNC_ASR_URL, sending the
+// $WHISPER_SUBTITLES_EVAL_INDEX with the server at $WHISPER_SUBTITLES_ASR_URL, sending the
 // track's language as the plugin does, and caches each answer. Windows
 // already cached are skipped. It is skipped unless both are set.
 func TestTranscribeWindows(t *testing.T) {
-	index, base := os.Getenv("SUBTITLE_SYNC_EVAL_INDEX"), os.Getenv("SUBTITLE_SYNC_ASR_URL")
+	index, base := os.Getenv("WHISPER_SUBTITLES_EVAL_INDEX"), os.Getenv("WHISPER_SUBTITLES_ASR_URL")
 	if index == "" || base == "" {
-		t.Skip("set SUBTITLE_SYNC_EVAL_INDEX and SUBTITLE_SYNC_ASR_URL")
+		t.Skip("set WHISPER_SUBTITLES_EVAL_INDEX and WHISPER_SUBTITLES_ASR_URL")
 	}
 	wins, err := readEvalIndex(index)
 	if err != nil || len(wins) == 0 {

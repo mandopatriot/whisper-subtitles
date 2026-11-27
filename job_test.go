@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"subtitle-sync/media"
+	"whisper-subtitles/media"
 )
 
 // writeSRT writes cues as an SRT file.
@@ -163,7 +163,7 @@ func newRig(t *testing.T, av *fakeAV, cues []Cue) *checkRig {
 	ft := &fakeTitle{row: SubRow{ID: 700, FileID: 70, Language: "en", Place: "beside", RelativePath: &rel,
 		Score: &score, Origin: "fetched", State: "present"}}
 	log := &syncBuf{}
-	k := &checker{ha: ft.server(t), asr: av, gate: newASRGate(), dataDir: data, logf: func(f string, a ...any) { fmt.Fprintf(log, f+"\n", a...) },
+	k := &checker{ha: ft.server(t), asr: av, queue: newASRQueue(), dataDir: data, logf: func(f string, a ...any) { fmt.Fprintf(log, f+"\n", a...) },
 		open: func(string) (video, io.Closer, error) { return av, io.NopCloser(nil), nil }}
 	c := Candidate{TitleID: 7, SubtitleID: 700, FileID: 70, VideoRel: "Film/Film.mkv", SubRel: rel, Language: "en", Format: "srt", Score: &score}
 	return &checkRig{k: k, av: av, ft: ft, c: c, loc: loc, log: log, data: data, cues: cues}
@@ -398,7 +398,7 @@ func TestCheckWindowLengthByBitrate(t *testing.T) {
 func TestCheckUploadTimeoutPauses(t *testing.T) {
 	cues := film(29, filmMs)
 	r := newRig(t, newFakeAV(cues, 1, 2500), cues)
-	r.k.gate = &asrGate{first: 150 * time.Millisecond, max: 400 * time.Millisecond}
+	r.k.queue = newASRQueueWith(150*time.Millisecond, 400*time.Millisecond)
 	r.av.onCall = func(n int) error {
 		if n == 3 {
 			return fmt.Errorf("%w (10m0s): context deadline exceeded", errASRTimeout)
@@ -431,7 +431,7 @@ func TestCheckUploadTimeoutPauses(t *testing.T) {
 		t.Errorf("first upload after %s, inside the 150 ms pause", first)
 	}
 	// Doubling, capped, and reset by an answer.
-	g := &asrGate{first: time.Second, max: 3 * time.Second}
+	g := newASRQueueWith(time.Second, 3*time.Second)
 	for i, want := range []time.Duration{time.Second, 2 * time.Second, 3 * time.Second, 3 * time.Second} {
 		if got := g.timedOut(); got != want {
 			t.Errorf("timeout %d: pause %s, want %s", i+1, got, want)
@@ -444,7 +444,7 @@ func TestCheckUploadTimeoutPauses(t *testing.T) {
 	// A stop while paused ends the wait.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := g.wait(ctx); !errors.Is(err, context.Canceled) {
+	if _, err := g.acquire(ctx, prioSync); !errors.Is(err, context.Canceled) {
 		t.Errorf("wait after a stop: %v", err)
 	}
 	if backoffFirst != 5*time.Minute || backoffMax != time.Hour || asrUploadTimeout != 10*time.Minute {

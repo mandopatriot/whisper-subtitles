@@ -55,6 +55,10 @@ func BaseLanguage(code string) string {
 // film's dialogue: commentaries and audio description.
 var notDialogue = []string{"comment", "comentario", "commento", "kommentar", "description", "descriptive", "described", "audiodeskription"}
 
+// Dialogue reports whether t is an audio track carrying the film's own
+// dialogue: enabled, and no commentary or audio description.
+func (t Track) Dialogue() bool { return t.Audio && t.Enabled && t.isDialogue() }
+
 // isDialogue reports whether a track carries the film's own dialogue.
 func (t Track) isDialogue() bool {
 	if t.Commentary || t.Described {

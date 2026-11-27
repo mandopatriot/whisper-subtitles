@@ -1,19 +1,22 @@
 {
-  "id": "subtitle-sync",
-  "name": "Subtitle Sync",
+  "id": "whisper-subtitles",
+  "name": "Whisper Subtitles",
   "version": "0.1.0",
   "author": "mandopatriot",
-  "description": "Lines up saved subtitles with the speech in the video, using your own Whisper server.",
-  "long_description": "When HolyArrs saves or upgrades a subtitle, subtitle-sync reads short pieces of the video's sound, asks your Whisper server what is said and when, and works out whether the subtitle is early, late or made for another frame rate. If it is sure, it uses HolyArrs's own Sync fix, so the old file goes to the holding folder and History shows the change. If it is not sure, or the subtitle is in another language than the sound, it leaves the subtitle alone and logs why. With word timings from the server it fixes small offsets precisely; with phrase timings only (INTEL-WHISPER today) it moves a subtitle only when it is off by 1 second or more.",
+  "description": "Writes subtitles from the video's audio and lines up saved subtitles with the speech, using your own Whisper server.",
+  "long_description": "Whisper Subtitles does two jobs with one Whisper server.\n\nAs a subtitle site, it offers a subtitle for each language spoken in the video's own audio tracks (never commentary or audio description). When HolyArrs picks one, it sends the audio to your Whisper server in 90-second pieces and builds an SRT from what is said. HolyArrs marks it Written from the audio, uses it only when no subtitle made by a person passes, and replaces it when a person's subtitle turns up later.\n\nAs a sync tool, when HolyArrs saves or upgrades a subtitle, it reads short pieces of the video's sound, asks your Whisper server what is said and when, and works out whether the subtitle is early, late or made for another frame rate. If it is sure, it uses HolyArrs's own Sync fix, so the old file goes to the holding folder and History shows the change. If it is not sure, or the subtitle is in another language than the sound, it leaves the subtitle alone and logs why. With word timings from the server it fixes small offsets precisely; with phrase timings only (INTEL-WHISPER today) it moves a subtitle only when it is off by 1 second or more.\n\nIt never writes into your Library: subtitles reach it only through HolyArrs. Only one piece of audio goes to the server at a time, and writing a subtitle goes before syncing.",
   "how_it_works": [
     "Approve the Library folders that hold your movies and shows (read only).",
-    "Set the Whisper server address, and add it as one of your own hosts.",
-    "Each saved or upgraded subtitle scoring under the threshold is checked.",
+    "Set the Whisper server address, and add the same name and port under Also allow your own server.",
+    "To get subtitles written from the audio, add a subtitle site of kind Plugin with the address plugin://whisper-subtitles.",
+    "Each saved or upgraded subtitle scoring under the threshold is checked and synced when sure. Subtitles this plugin wrote are not checked again.",
     "To check titles by hand, list their ids in Check these titles and save.",
-    "Timing is most precise when your Whisper server returns word timings, as Faster-Whisper based engines do. Whisper Pro ASR's INTEL-WHISPER engine currently returns phrase timings only, which were off by up to half a second, so with it only subtitles off by 1 second or more are moved."
+    "Only audio tracks tagged with a language are offered; untagged tracks, commentary and audio description are not.",
+    "Timing is most precise when your Whisper server returns word timings, as Faster-Whisper based engines do. Whisper Pro ASR's INTEL-WHISPER engine returns phrase timings only unless INTEL_WORD_TIMESTAMPS=true is set, so with phrase timings sync moves only subtitles off by 1 second or more, and written subtitles can be up to half a second off."
   ],
   "licence": "AGPL-3.0",
   "category": "Subtitles",
+  "support_url": "https://github.com/mandopatriot/whisper-subtitles/issues",
   "access": {
     "hosts": [],
     "folders": [
@@ -22,17 +25,19 @@
       {"name": "more_movies", "mode": "read", "why": "Another Library folder of movies, such as 4K. Read only, like movies.", "required": false},
       {"name": "more_shows", "mode": "read", "why": "Another Library folder of shows. Read only, like shows.", "required": false}
     ],
-    "actions": ["library.read", "files.subtitles.change"],
+    "actions": ["library.read", "files.subtitles.change", "sources.subtitles"],
     "events": ["library.subtitle"]
   },
   "settings": [
-    {"key": "asr_url", "label": "Whisper server address", "type": "text", "default": "", "help": "Such as http://whisper.example.lan:9000. Add the same name and port as one of your own hosts for this plugin."},
+    {"key": "asr_url", "label": "Whisper server address", "type": "text", "default": "", "help": "Such as http://whisper.example.lan:9000. Add the same name and port under Also allow your own server."},
+    {"key": "transcribe", "label": "Write subtitles from the audio", "type": "toggle", "default": "true", "help": "Offers a subtitle for each language spoken in the video. Needs a subtitle site of kind Plugin with the address plugin://whisper-subtitles."},
+    {"key": "sync", "label": "Line up saved subtitles", "type": "toggle", "default": "true", "help": "Checks each saved or upgraded subtitle against the speech and syncs it when sure."},
     {"key": "threshold_episodes", "label": "Shows: skip subtitles scoring at or above", "type": "number", "default": 96, "help": "HolyArrs score out of 100. Subtitles at or above this are trusted and never touched."},
     {"key": "threshold_movies", "label": "Movies: skip subtitles scoring at or above", "type": "number", "default": 86, "help": "HolyArrs score out of 100. Subtitles at or above this are trusted and never touched."},
-    {"key": "jobs", "label": "Jobs at once", "type": "number", "default": 1, "help": "1 to 4."},
-    {"key": "job_timeout_minutes", "label": "Time limit per job (minutes)", "type": "number", "default": 180, "help": "1 to 1440."},
+    {"key": "jobs", "label": "Sync jobs at once", "type": "number", "default": 1, "help": "1 to 4. Audio still goes to the server one piece at a time."},
+    {"key": "job_timeout_minutes", "label": "Time limit per job (minutes)", "type": "number", "default": 180, "help": "1 to 1440. Applies to syncing a title and to writing one subtitle."},
     {"key": "check_titles", "label": "Check these titles", "type": "text", "default": "", "help": "Title ids, separated by commas. Saving runs them once, skipping the score threshold. Every other rule still applies."},
-    {"key": "check_only", "label": "Check only", "type": "toggle", "default": "false", "help": "Logs what it would change and changes nothing."}
+    {"key": "check_only", "label": "Check only", "type": "toggle", "default": "false", "help": "Sync logs what it would change and changes nothing. Writing subtitles is not affected."}
   ],
   "min_app_version": "1.3.1"
 }

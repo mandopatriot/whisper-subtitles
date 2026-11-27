@@ -11,15 +11,15 @@ import (
 )
 
 // TestRealFiles cuts the plugin's windows (WindowStarts) from every .mkv
-// under $SUBTITLE_SYNC_REAL_DIR into $SUBTITLE_SYNC_OUT_DIR, for checking
-// with ffmpeg. The input must be inside the test library $SUBTITLE_SYNC_LIB,
+// under $WHISPER_SUBTITLES_REAL_DIR into $WHISPER_SUBTITLES_OUT_DIR, for checking
+// with ffmpeg. The input must be inside the test library $WHISPER_SUBTITLES_LIB,
 // which is only read; the output must be outside it and outside every folder
-// in $SUBTITLE_SYNC_PROTECT (colon-separated, such as a real library). It is
+// in $WHISPER_SUBTITLES_PROTECT (colon-separated, such as a real library). It is
 // skipped unless all three are set.
 func TestRealFiles(t *testing.T) {
-	in, out, libEnv := os.Getenv("SUBTITLE_SYNC_REAL_DIR"), os.Getenv("SUBTITLE_SYNC_OUT_DIR"), os.Getenv("SUBTITLE_SYNC_LIB")
+	in, out, libEnv := os.Getenv("WHISPER_SUBTITLES_REAL_DIR"), os.Getenv("WHISPER_SUBTITLES_OUT_DIR"), os.Getenv("WHISPER_SUBTITLES_LIB")
 	if in == "" || out == "" || libEnv == "" {
-		t.Skip("set SUBTITLE_SYNC_REAL_DIR, SUBTITLE_SYNC_OUT_DIR and SUBTITLE_SYNC_LIB")
+		t.Skip("set WHISPER_SUBTITLES_REAL_DIR, WHISPER_SUBTITLES_OUT_DIR and WHISPER_SUBTITLES_LIB")
 	}
 	within := func(p, dir string) bool {
 		p, dir = filepath.Clean(p), filepath.Clean(dir)
@@ -29,14 +29,14 @@ func TestRealFiles(t *testing.T) {
 	absIn, _ := filepath.Abs(in)
 	absOut, _ := filepath.Abs(out)
 	if !within(absIn, lib) {
-		t.Fatalf("SUBTITLE_SYNC_REAL_DIR must be %s or below it, not %s", lib, absIn)
+		t.Fatalf("WHISPER_SUBTITLES_REAL_DIR must be %s or below it, not %s", lib, absIn)
 	}
-	for _, bad := range append([]string{lib}, filepath.SplitList(os.Getenv("SUBTITLE_SYNC_PROTECT"))...) {
+	for _, bad := range append([]string{lib}, filepath.SplitList(os.Getenv("WHISPER_SUBTITLES_PROTECT"))...) {
 		if bad == "" {
 			continue
 		}
 		if b, _ := filepath.Abs(bad); within(absOut, b) {
-			t.Fatalf("SUBTITLE_SYNC_OUT_DIR must not be under %s", b)
+			t.Fatalf("WHISPER_SUBTITLES_OUT_DIR must not be under %s", b)
 		}
 	}
 	n := 0

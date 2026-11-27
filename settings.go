@@ -14,6 +14,8 @@ const (
 	defThresholdMovies   = 86
 	defJobs              = 1
 	defJobTimeoutMinutes = 180
+	defTranscribe        = true
+	defSync              = true
 )
 
 // Setting limits.
@@ -33,6 +35,8 @@ type Settings struct {
 	CheckTitles       []int64
 	CheckTitlesRaw    string // the saved text, to run a list only once
 	CheckOnly         bool
+	Transcribe        bool // be a subtitle site that writes subtitles from the audio
+	Sync              bool // line up saved subtitles
 }
 
 // readSettings reads HOLYARRS_PLUGIN_SETTING_<KEY> from getenv. A value that
@@ -69,13 +73,22 @@ func readSettings(getenv func(string) string) (Settings, []string) {
 			s.ASRURL = u
 		}
 	}
-	switch v := strings.ToLower(get("check_only")); v {
-	case "", "false":
-	case "true":
-		s.CheckOnly = true
-	default:
-		warn = append(warn, fmt.Sprintf("setting check_only=%q is not true or false; using false", v))
+	toggle := func(key string, def bool) bool {
+		switch v := strings.ToLower(get(key)); v {
+		case "":
+			return def
+		case "true":
+			return true
+		case "false":
+			return false
+		default:
+			warn = append(warn, fmt.Sprintf("setting %s=%q is not true or false; using %t", key, v, def))
+			return def
+		}
 	}
+	s.CheckOnly = toggle("check_only", false)
+	s.Transcribe = toggle("transcribe", defTranscribe)
+	s.Sync = toggle("sync", defSync)
 	s.CheckTitlesRaw = get("check_titles")
 	ids, bad := parseTitleIDs(s.CheckTitlesRaw)
 	s.CheckTitles = ids

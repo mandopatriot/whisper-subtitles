@@ -9,10 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
-	"subtitle-sync/media"
+	"whisper-subtitles/media"
 )
 
 // Limits for the audio check (plan sections 3 and 5).
@@ -66,63 +65,11 @@ type transcriber interface {
 	Transcribe(ctx context.Context, path, lang string) (Transcript, error)
 }
 
-// asrGate pauses uploads after one got no answer in time: a stuck task
-// holds the server's only slot, and more uploads would queue behind it.
-// The pause starts at backoffFirst and doubles up to backoffMax; an answer
-// ends it.
-type asrGate struct {
-	mu         sync.Mutex
-	until      time.Time
-	pause      time.Duration
-	first, max time.Duration
-}
-
-func newASRGate() *asrGate { return &asrGate{first: backoffFirst, max: backoffMax} }
-
-// wait returns when uploads may go on, or when ctx ends.
-func (g *asrGate) wait(ctx context.Context) error {
-	for {
-		g.mu.Lock()
-		d := time.Until(g.until)
-		g.mu.Unlock()
-		if d <= 0 {
-			return nil
-		}
-		t := time.NewTimer(d)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			return ctx.Err()
-		case <-t.C:
-		}
-	}
-}
-
-// timedOut starts or doubles the pause and returns it.
-func (g *asrGate) timedOut() time.Duration {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.pause == 0 {
-		g.pause = g.first
-	} else {
-		g.pause = min(g.pause*2, g.max)
-	}
-	g.until = time.Now().Add(g.pause)
-	return g.pause
-}
-
-// answered ends the pause after an upload got an answer.
-func (g *asrGate) answered() {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.pause = 0
-}
-
 // checker checks one subtitle against the audio and syncs it when sure.
 type checker struct {
 	ha        *HolyArrs
 	asr       transcriber
-	gate      *asrGate
+	queue     *asrQueue
 	dataDir   string
 	checkOnly bool
 	logf      func(format string, args ...any)
@@ -247,15 +194,17 @@ func (k *checker) window(ctx context.Context, v video, t media.Track, startMs, d
 	case win.Capped && win.DurationMs() < minWindowMs:
 		return WindowText{BaseMs: win.BaseMs, Err: fmt.Errorf("only %d ms fit in %d MiB", win.DurationMs(), uploadCapBytes>>20)}
 	}
-	if err := k.gate.wait(ctx); err != nil {
+	release, err := k.queue.acquire(ctx, prioSync)
+	if err != nil {
 		return WindowText{BaseMs: win.BaseMs, Err: err}
 	}
 	tr, err := k.asr.Transcribe(ctx, f.Name(), lang)
+	release()
 	switch {
 	case errors.Is(err, errASRTimeout):
-		k.logf("Whisper gave no answer in time; no uploads for %s: %v", k.gate.timedOut(), err)
+		k.logf("Whisper gave no answer in time; no uploads for %s: %v", k.queue.timedOut(), err)
 	case err == nil:
-		k.gate.answered()
+		k.queue.answered()
 	}
 	return WindowText{BaseMs: win.BaseMs, Tr: tr, Err: err}
 }

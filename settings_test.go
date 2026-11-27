@@ -16,7 +16,7 @@ func TestSettingsDefaults(t *testing.T) {
 	if len(warn) != 0 {
 		t.Errorf("warnings %v", warn)
 	}
-	want := Settings{ThresholdEpisodes: 96, ThresholdMovies: 86, Jobs: 1, JobTimeoutMinutes: 180}
+	want := Settings{ThresholdEpisodes: 96, ThresholdMovies: 86, Jobs: 1, JobTimeoutMinutes: 180, Transcribe: true, Sync: true}
 	if !reflect.DeepEqual(s, want) {
 		t.Errorf("got %+v, want %+v", s, want)
 	}
@@ -48,11 +48,11 @@ func TestSettingsOutOfRange(t *testing.T) {
 	for _, c := range []struct{ key, val string }{
 		{"THRESHOLD_EPISODES", "-1"}, {"THRESHOLD_EPISODES", "102"}, {"THRESHOLD_MOVIES", "85.5"},
 		{"JOBS", "0"}, {"JOBS", "5"}, {"JOB_TIMEOUT_MINUTES", "0"}, {"JOB_TIMEOUT_MINUTES", "1441"},
-		{"JOBS", "two"}, {"JOBS", "NaN"}, {"CHECK_ONLY", "yes"},
+		{"JOBS", "two"}, {"JOBS", "NaN"}, {"CHECK_ONLY", "yes"}, {"TRANSCRIBE", "on"}, {"SYNC", "1"},
 		{"ASR_URL", "whisper:9000"}, {"ASR_URL", "ftp://whisper"}, {"ASR_URL", "http://u:p@whisper:9000"}, {"ASR_URL", "http://w:9000/?a=1"},
 	} {
 		s, warn := readSettings(env(map[string]string{c.key: c.val}))
-		def := Settings{ThresholdEpisodes: 96, ThresholdMovies: 86, Jobs: 1, JobTimeoutMinutes: 180}
+		def := defaults()
 		if len(warn) != 1 || !reflect.DeepEqual(s, def) {
 			t.Errorf("%s=%q: got %+v, warnings %v; want defaults and one warning", c.key, c.val, s, warn)
 		}
@@ -75,5 +75,17 @@ func TestSettingsEdges(t *testing.T) {
 		if got := c.get(s); got != c.want || len(warn) != 0 {
 			t.Errorf("%s=%q: got %d (warnings %v), want %d", c.key, c.val, got, warn, c.want)
 		}
+	}
+}
+
+// The two jobs can be turned off one by one.
+func TestSettingsToggles(t *testing.T) {
+	s, warn := readSettings(env(map[string]string{"TRANSCRIBE": "false", "SYNC": "FALSE", "CHECK_ONLY": "True"}))
+	if len(warn) != 0 || s.Transcribe || s.Sync || !s.CheckOnly {
+		t.Errorf("got %+v, warnings %v", s, warn)
+	}
+	s, _ = readSettings(env(map[string]string{"TRANSCRIBE": "true", "SYNC": ""}))
+	if !s.Transcribe || !s.Sync {
+		t.Errorf("got %+v, want both on", s)
 	}
 }

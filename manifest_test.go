@@ -19,6 +19,8 @@ func TestManifest(t *testing.T) {
 	}
 	var m struct {
 		ID            string `json:"id"`
+		Name          string `json:"name"`
+		SupportURL    string `json:"support_url"`
 		Version       string `json:"version"`
 		Licence       string `json:"licence"`
 		MinAppVersion string `json:"min_app_version"`
@@ -42,13 +44,16 @@ func TestManifest(t *testing.T) {
 	if err := dec.Decode(&m); err != nil {
 		t.Fatal(err)
 	}
-	if m.ID != "subtitle-sync" || m.Licence != "AGPL-3.0" || m.MinAppVersion != "1.3.1" || m.Version == "" {
-		t.Errorf("id/licence/min_app_version/version = %q %q %q %q", m.ID, m.Licence, m.MinAppVersion, m.Version)
+	if m.ID != "whisper-subtitles" || m.Name != "Whisper Subtitles" || m.Licence != "AGPL-3.0" || m.MinAppVersion != "1.3.1" || m.Version != "0.1.0" {
+		t.Errorf("id/name/licence/min_app_version/version = %q %q %q %q %q", m.ID, m.Name, m.Licence, m.MinAppVersion, m.Version)
+	}
+	if m.SupportURL != "https://github.com/mandopatriot/whisper-subtitles/issues" {
+		t.Errorf("support_url = %q", m.SupportURL)
 	}
 	if len(m.Access.Hosts) != 0 {
 		t.Errorf("hosts = %v, want none: the Whisper server is an owner host", m.Access.Hosts)
 	}
-	if want := []string{"library.read", "files.subtitles.change"}; !reflect.DeepEqual(m.Access.Actions, want) {
+	if want := []string{"library.read", "files.subtitles.change", "sources.subtitles"}; !reflect.DeepEqual(m.Access.Actions, want) {
 		t.Errorf("actions = %v, want %v", m.Access.Actions, want)
 	}
 	if want := []string{"library.subtitle"}; !reflect.DeepEqual(m.Access.Events, want) {
@@ -65,6 +70,8 @@ func TestManifest(t *testing.T) {
 	}
 	want := []struct{ key, typ, def string }{
 		{"asr_url", "text", `""`},
+		{"transcribe", "toggle", strconv.Quote(strconv.FormatBool(defTranscribe))},
+		{"sync", "toggle", strconv.Quote(strconv.FormatBool(defSync))},
 		{"threshold_episodes", "number", strconv.Itoa(defThresholdEpisodes)},
 		{"threshold_movies", "number", strconv.Itoa(defThresholdMovies)},
 		{"jobs", "number", strconv.Itoa(defJobs)},
@@ -104,7 +111,16 @@ func TestManifest(t *testing.T) {
 		t.Errorf("how_it_works says 1 second; fitMinShiftPhrasesMs is %d", fitMinShiftPhrasesMs)
 	}
 	// The numbers CLAUDE.local.md fixes.
-	if defThresholdEpisodes != 96 || defThresholdMovies != 86 || defJobs != 1 || defJobTimeoutMinutes != 180 {
-		t.Error("defaults must be 96, 86, 1 job and 180 minutes")
+	if defThresholdEpisodes != 96 || defThresholdMovies != 86 || defJobs != 1 || defJobTimeoutMinutes != 180 || !defTranscribe || !defSync {
+		t.Error("defaults must be 96, 86, 1 job, 180 minutes, and both jobs on")
+	}
+	// The site is explained: the Plugin site address, and that only tagged
+	// tracks are offered.
+	site := false
+	for _, s := range m.HowItWorks {
+		site = site || strings.Contains(s, "plugin://whisper-subtitles")
+	}
+	if !site || !strings.Contains(m.LongDescription, "90-second") || chunkMs != 90_000 {
+		t.Error("how_it_works or long_description doesn't explain the subtitle site and its 90-second pieces")
 	}
 }

@@ -49,6 +49,9 @@ type SubRow struct {
 	Origin          string         `json:"origin"`
 	State           string         `json:"state"`
 	Sync            map[string]any `json:"sync"`
+	// Made says a machine wrote the file, such as "transcribed" for one
+	// written from the audio by a plugin subtitle site; nil for a person's.
+	Made *string `json:"made"`
 }
 
 // FileView is one video file of a title with its subtitles (subtitles.FileView).

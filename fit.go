@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"subtitle-sync/media"
+	"whisper-subtitles/media"
 )
 
 // Fit constants (plan section 4). Each is tested at its edge in fit_test.go.

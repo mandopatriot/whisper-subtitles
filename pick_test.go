@@ -32,7 +32,7 @@ func titleFiles(t *testing.T) []FileView {
 }
 
 func defaults() Settings {
-	return Settings{ThresholdEpisodes: 96, ThresholdMovies: 86, Jobs: 1, JobTimeoutMinutes: 180}
+	return Settings{ThresholdEpisodes: 96, ThresholdMovies: 86, Jobs: 1, JobTimeoutMinutes: 180, Transcribe: true, Sync: true}
 }
 
 func TestDecodeTitleSubtitles(t *testing.T) {
@@ -85,6 +85,8 @@ func row(mut func(*SubRow)) SubRow {
 	return r
 }
 
+func made(m string) func(*SubRow) { return func(r *SubRow) { r.Made = &m } }
+
 func TestCheckRowRules(t *testing.T) {
 	set := defaults()
 	score := func(n int) func(*SubRow) { return func(r *SubRow) { r.Score = &n } }
@@ -119,6 +121,9 @@ func TestCheckRowRules(t *testing.T) {
 		{"no score is checked", row(func(r *SubRow) { r.Score = nil }), "episode", false, ""},
 		{"manual ignores score", row(score(100)), "", true, ""},
 		{"manual keeps the sync rule", row(func(r *SubRow) { r.Sync = map[string]any{"offset_ms": 1.0} }), "", true, "already changed"},
+		{"written from the audio", row(made("transcribed")), "movie", false, "written from the audio"},
+		{"written from the audio, manual run too", row(made("transcribed")), "", true, "written from the audio"},
+		{"translated is still checked", row(made("translated")), "movie", false, ""},
 	}
 	for _, c := range cases {
 		err := checkRow(c.r, c.kind, set, c.manual)

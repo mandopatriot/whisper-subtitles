@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"subtitle-sync/media"
+	"whisper-subtitles/media"
 )
 
 func TestReadCues(t *testing.T) {

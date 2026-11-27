@@ -92,8 +92,8 @@ func newMKA(w io.Writer, t Track, max int64) (*mka, error) {
 
 	var info []byte
 	info = elemUint(info, idTimescale, 1_000_000)
-	info = elemBytes(info, 0x4D80, []byte("subtitle-sync")) // MuxingApp
-	info = elemBytes(info, 0x5741, []byte("subtitle-sync")) // WritingApp
+	info = elemBytes(info, 0x4D80, []byte("whisper-subtitles")) // MuxingApp
+	info = elemBytes(info, 0x5741, []byte("whisper-subtitles")) // WritingApp
 	h = elemBytes(h, idInfo, info)
 
 	var au []byte

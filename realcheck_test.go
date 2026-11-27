@@ -11,26 +11,26 @@ import (
 	"testing"
 )
 
-// TestRealCheck runs the whole check on one real video from $SUBTITLE_SYNC_LIB
-// (read only) with the Whisper server at $SUBTITLE_SYNC_ASR_URL and a fake HolyArrs:
-// the subtitle $SUBTITLE_SYNC_E2E_SUB, shifted by $SUBTITLE_SYNC_E2E_SHIFT_MS into
+// TestRealCheck runs the whole check on one real video from $WHISPER_SUBTITLES_LIB
+// (read only) with the Whisper server at $WHISPER_SUBTITLES_ASR_URL and a fake HolyArrs:
+// the subtitle $WHISPER_SUBTITLES_E2E_SUB, shifted by $WHISPER_SUBTITLES_E2E_SHIFT_MS into
 // a temporary folder, must come back as a sync undoing the shift within
-// $SUBTITLE_SYNC_E2E_TOL_MS (default 600, the phrase-timing bound). Skipped
+// $WHISPER_SUBTITLES_E2E_TOL_MS (default 600, the phrase-timing bound). Skipped
 // unless the video, subtitle and server are set.
 func TestRealCheck(t *testing.T) {
-	vid, sub, asr := os.Getenv("SUBTITLE_SYNC_E2E_VIDEO"), os.Getenv("SUBTITLE_SYNC_E2E_SUB"), os.Getenv("SUBTITLE_SYNC_ASR_URL")
+	vid, sub, asr := os.Getenv("WHISPER_SUBTITLES_E2E_VIDEO"), os.Getenv("WHISPER_SUBTITLES_E2E_SUB"), os.Getenv("WHISPER_SUBTITLES_ASR_URL")
 	if vid == "" || sub == "" || asr == "" {
-		t.Skip("set SUBTITLE_SYNC_E2E_VIDEO, SUBTITLE_SYNC_E2E_SUB and SUBTITLE_SYNC_ASR_URL")
+		t.Skip("set WHISPER_SUBTITLES_E2E_VIDEO, WHISPER_SUBTITLES_E2E_SUB and WHISPER_SUBTITLES_ASR_URL")
 	}
 	lib := testLibrary(t)
 	for _, p := range []string{vid, sub} {
 		if a, _ := filepath.Abs(p); !within(a, lib) {
-			t.Fatalf("%s is not under SUBTITLE_SYNC_LIB %s", p, lib)
+			t.Fatalf("%s is not under WHISPER_SUBTITLES_LIB %s", p, lib)
 		}
 	}
-	shift, _ := strconv.ParseInt(os.Getenv("SUBTITLE_SYNC_E2E_SHIFT_MS"), 10, 64)
+	shift, _ := strconv.ParseInt(os.Getenv("WHISPER_SUBTITLES_E2E_SHIFT_MS"), 10, 64)
 	tol := int64(600)
-	if v, err := strconv.ParseInt(os.Getenv("SUBTITLE_SYNC_E2E_TOL_MS"), 10, 64); err == nil {
+	if v, err := strconv.ParseInt(os.Getenv("WHISPER_SUBTITLES_E2E_TOL_MS"), 10, 64); err == nil {
 		tol = v
 	}
 	b, err := os.ReadFile(sub)
@@ -52,7 +52,7 @@ func TestRealCheck(t *testing.T) {
 	rel, score := "Film/Film.en.srt", 80
 	ft.row = SubRow{ID: 700, FileID: 70, Language: "en", Place: "beside", RelativePath: &rel, Score: &score, Origin: "fetched", State: "present"}
 	log := &syncBuf{}
-	k := &checker{ha: ft.server(t), asr: newWhisper(asr), gate: newASRGate(), dataDir: t.TempDir(), open: openVideo,
+	k := &checker{ha: ft.server(t), asr: newWhisper(asr), queue: newASRQueue(), dataDir: t.TempDir(), open: openVideo,
 		logf: func(f string, a ...any) { io.WriteString(log, strings.TrimSpace(fmt.Sprintf(f, a...))+"\n") }}
 	c := Candidate{TitleID: 7, SubtitleID: 700, FileID: 70, VideoRel: "Film/Film.mkv", SubRel: rel, Language: "en", Format: "srt", Score: &score}
 	err = k.check(context.Background(), c, Located{Video: vid, Sub: shifted})
