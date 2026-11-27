@@ -231,9 +231,11 @@ func TestTranscribeRetries(t *testing.T) {
 		calls  int32
 		ok     bool
 	}{
-		{[]int{503}, 2, true},
-		{[]int{502}, 2, true},
-		{[]int{504, 504}, 2, false},
+		// A proxy's 502, 503 or 504 is a server that can't be reached:
+		// returned at once, for the queue to wait on.
+		{[]int{503}, 1, false},
+		{[]int{502}, 1, false},
+		{[]int{504}, 1, false},
 		{[]int{400}, 1, false},
 		{[]int{422}, 1, false},
 		{[]int{500}, 1, false},
@@ -248,25 +250,59 @@ func TestTranscribeRetries(t *testing.T) {
 		if err != nil && !errors.Is(err, ErrASR) {
 			t.Errorf("answers %v: %v is not ErrASR", c.status, err)
 		}
+		if down := c.status[0] >= 502 && c.status[0] <= 504; errors.Is(err, errASRDown) != down || errors.Is(err, errASRTimeout) {
+			t.Errorf("answers %v: %v; down should be %v", c.status, err, down)
+		}
 	}
 }
 
-func TestTranscribeConnectionRetry(t *testing.T) {
+// A refused connection or a name that does not resolve is errASRDown, at
+// once and without the retry wait.
+func TestTranscribeUnreachable(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
-	base := srv.URL
+	refused := srv.URL
 	srv.Close() // nothing listens now
-	w := newWhisper(base)
+	for _, base := range []string{refused, "http://whisper.invalid:9000"} {
+		w := newWhisper(base)
+		w.RetryWait = time.Hour
+		start := time.Now()
+		_, err := w.Transcribe(context.Background(), windowFile(t, []byte("mka")), "")
+		if !errors.Is(err, errASRDown) || errors.Is(err, errASRTimeout) || time.Since(start) > 10*time.Second {
+			t.Errorf("%s: %v after %s; want errASRDown at once", base, err, time.Since(start))
+		}
+	}
+}
+
+// dropper takes the upload and closes the connection without an answer.
+func dropper(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		io.Copy(io.Discard, r.Body)
+		c, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			c.Close()
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+// A connection lost after the server took the upload is not "can't be
+// reached": it is tried once more, then fails.
+func TestTranscribeLostConnectionRetried(t *testing.T) {
+	srv, calls := dropper(t)
+	w := newWhisper(srv.URL)
 	w.RetryWait = 10 * time.Millisecond
-	start := time.Now()
 	_, err := w.Transcribe(context.Background(), windowFile(t, []byte("mka")), "")
-	if !errors.Is(err, ErrASR) || time.Since(start) < 10*time.Millisecond {
-		t.Errorf("refused connection: %v after %s; want one retry, then ErrASR", err, time.Since(start))
+	if !errors.Is(err, ErrASR) || errors.Is(err, errASRDown) || errors.Is(err, errASRTimeout) || calls.Load() != 2 {
+		t.Errorf("%v after %d calls; want ErrASR after 2", err, calls.Load())
 	}
 }
 
 func TestTranscribeStopsOnCancel(t *testing.T) {
-	fw := &fakeWhisper{t: t, status: []int{503}}
-	w := testWhisper(t, fw)
+	srv, _ := dropper(t)
+	w := newWhisper(srv.URL)
 	w.RetryWait = time.Hour
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(50 * time.Millisecond); cancel() }()

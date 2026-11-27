@@ -72,6 +72,7 @@ func newApp(dataDir string, set Settings, ha *HolyArrs, folders []Folder, out io
 	if set.ASRURL != "" {
 		w := newWhisper(set.ASRURL)
 		k.asr = w
+		q.watchDown(w.Ready, a.logf)
 		if set.Transcribe {
 			s := &searcher{set: set, folders: folders, tracks: newTrackCache(openVideo), wait: searchWait, logf: a.logf}
 			mk := &maker{dataDir: dataDir, folders: folders, open: openVideo, asr: w, queue: q, cache: newMadeCache(dataDir), logf: a.logf}

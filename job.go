@@ -194,23 +194,24 @@ func (k *checker) window(ctx context.Context, who string, v video, t media.Track
 	case win.Capped && win.DurationMs() < minWindowMs:
 		return WindowText{BaseMs: win.BaseMs, Err: fmt.Errorf("only %d ms fit in %d MiB", win.DurationMs(), uploadCapBytes>>20)}
 	}
+	var tr Transcript
 	var waitFrom time.Time
-	release, err := k.queue.acquireNoting(ctx, prioSync, func(holder asrPrio, ahead int) {
+	err = k.queue.send(ctx, prioSync, func(holder asrPrio, ahead int) {
 		waitFrom = time.Now()
 		goes := fmt.Sprintf("%d uploads go", ahead)
 		if ahead == 1 {
 			goes = "1 upload goes"
 		}
 		k.logf("%s: waiting for the Whisper slot, held by %s (%s first)", who, holder, goes)
+	}, nil, func() error {
+		if !waitFrom.IsZero() {
+			k.logf("%s: got the Whisper slot after %s", who, time.Since(waitFrom).Round(100*time.Millisecond))
+			waitFrom = time.Time{}
+		}
+		var err error
+		tr, err = k.asr.Transcribe(ctx, f.Name(), lang)
+		return err
 	})
-	if err != nil {
-		return WindowText{BaseMs: win.BaseMs, Err: err}
-	}
-	if !waitFrom.IsZero() {
-		k.logf("%s: got the Whisper slot after %s", who, time.Since(waitFrom).Round(100*time.Millisecond))
-	}
-	tr, err := k.asr.Transcribe(ctx, f.Name(), lang)
-	release()
 	switch {
 	case errors.Is(err, errASRTimeout):
 		k.logf("Whisper gave no answer in time; no uploads for %s: %v", k.queue.timedOut(), err)

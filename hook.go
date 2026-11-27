@@ -22,6 +22,8 @@ const (
 	answerTries      = 3
 	maxHookJobBytes  = 1 << 20
 	maxAnswerError   = 300
+	// makeWait is how long HolyArrs waits for a make's answer.
+	makeWait = time.Hour
 )
 
 // hookJob is one job from the hook.
@@ -104,6 +106,8 @@ type makeTask struct {
 	id   string
 	req  makeReq
 	jobs []string
+	// lastAsk is when HolyArrs last asked for it; it waits makeWait from then.
+	lastAsk time.Time
 }
 
 // siteServer is the plugin as a subtitle site.
@@ -119,6 +123,7 @@ type siteServer struct {
 	firstBackoff time.Duration // after another poll error, doubling
 	maxBackoff   time.Duration // up to this
 	answerWait   time.Duration // between answer tries
+	makeWait     time.Duration // HolyArrs's wait for a make
 
 	mu      sync.Mutex
 	pending []*makeTask
@@ -129,7 +134,7 @@ type siteServer struct {
 
 func newSiteServer(ha *HolyArrs, s *searcher, mk *maker, logf func(string, ...any), jobTimeout time.Duration) *siteServer {
 	return &siteServer{ha: ha, search: s, mk: mk, logf: logf, jobTimeout: jobTimeout,
-		authWait: time.Minute, firstBackoff: time.Second, maxBackoff: 30 * time.Second, answerWait: 2 * time.Second,
+		authWait: time.Minute, firstBackoff: time.Second, maxBackoff: 30 * time.Second, answerWait: 2 * time.Second, makeWait: makeWait,
 		byID: map[string]*makeTask{}, wake: make(chan struct{}, 1)}
 }
 
@@ -224,6 +229,7 @@ func (s *siteServer) enqueue(ctx context.Context, jobID string, r makeReq) {
 	s.mu.Lock()
 	if t := s.byID[id]; t != nil {
 		t.jobs = append(t.jobs, jobID)
+		t.lastAsk = time.Now()
 		s.mu.Unlock()
 		s.logf("file %d, %s: already being written; this ask waits for it", r.FileID, r.Language)
 		return
@@ -233,7 +239,7 @@ func (s *siteServer) enqueue(ctx context.Context, jobID string, r makeReq) {
 		s.answer(ctx, jobID, nil, fmt.Sprintf("busy, %d subtitles already queued", n))
 		return
 	}
-	s.byID[id] = &makeTask{id: id, req: r, jobs: []string{jobID}}
+	s.byID[id] = &makeTask{id: id, req: r, jobs: []string{jobID}, lastAsk: time.Now()}
 	s.pending = append(s.pending, s.byID[id])
 	n := len(s.pending)
 	s.mu.Unlock()
@@ -268,6 +274,11 @@ func (s *siteServer) worker(ctx context.Context) {
 			continue
 		}
 		mctx, cancel := context.WithTimeout(ctx, s.jobTimeout)
+		mctx = withGiveUp(mctx, func() time.Time {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			return t.lastAsk.Add(s.makeWait)
+		})
 		body, err := s.mk.make(mctx, t.req)
 		timedOut := errors.Is(mctx.Err(), context.DeadlineExceeded)
 		cancel()

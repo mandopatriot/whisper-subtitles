@@ -534,3 +534,32 @@ func TestAppUsesChecker(t *testing.T) {
 		t.Errorf("got %v", err)
 	}
 }
+
+// A sync keeps going through a Whisper outage and syncs once it is back.
+func TestCheckWaitsForWhisper(t *testing.T) {
+	cues := film(33, filmMs)
+	r := newRig(t, newFakeAV(cues, 1, 2500), cues)
+	d := &downServer{}
+	d.up.Store(true)
+	r.k.queue.watchDown(d.probe, r.k.logf)
+	r.k.queue.probeEvery = 20 * time.Millisecond
+	r.av.onCall = func(n int) error {
+		if n == 4 {
+			d.up.Store(false)
+			go func() { time.Sleep(150 * time.Millisecond); d.up.Store(true) }()
+		}
+		if !d.up.Load() {
+			return fmt.Errorf("%w (whisper.test:9000 answered 502)", errASRDown)
+		}
+		return nil
+	}
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	if f := r.syncBody(t); math.Abs(float64(f.OffsetMS)-2500) > 30 {
+		t.Errorf("sent %+v", f)
+	}
+	if l := r.log.String(); strings.Count(l, "went away") != 1 || strings.Count(l, "is back after") != 1 {
+		t.Errorf("log: %s", l)
+	}
+}

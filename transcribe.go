@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"whisper-subtitles/media"
@@ -181,6 +182,20 @@ func (m *maker) current(r makeReq) (string, offerKey, error) {
 	return full, k, nil
 }
 
+type giveUpKey struct{}
+
+// withGiveUp tells a make when HolyArrs stops waiting for it: past that, a
+// Whisper server that can't be reached fails the make instead of being
+// waited for. Finished chunks are kept either way.
+func withGiveUp(ctx context.Context, at func() time.Time) context.Context {
+	return context.WithValue(ctx, giveUpKey{}, at)
+}
+
+func giveUpOf(ctx context.Context) func() time.Time {
+	f, _ := ctx.Value(giveUpKey{}).(func() time.Time)
+	return f
+}
+
 // make writes the subtitle r asks for, resuming from finished chunks.
 func (m *maker) make(ctx context.Context, r makeReq) ([]byte, error) {
 	rule := func(f string, a ...any) error { return fmt.Errorf("%w: %s", errMakeRule, fmt.Sprintf(f, a...)) }
@@ -316,12 +331,12 @@ func (m *maker) chunk(ctx context.Context, v video, t media.Track, lang string, 
 	if last {
 		ownEnd = math.MaxInt64 // the last chunk keeps everything after start
 	}
-	release, err := m.queue.acquire(ctx, prioMake)
-	if err != nil {
-		return chunkFile{}, err
-	}
-	tr, err := m.asr.TranscribeChunk(ctx, f.Name(), lang)
-	release()
+	var tr Transcript
+	err = m.queue.send(ctx, prioMake, nil, giveUpOf(ctx), func() error {
+		var err error
+		tr, err = m.asr.TranscribeChunk(ctx, f.Name(), lang)
+		return err
+	})
 	switch {
 	case errors.Is(err, errASRTimeout):
 		m.logf("Whisper gave no answer in time; no uploads for %s: %v", m.queue.timedOut(), err)

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -523,5 +524,80 @@ func TestCachePrune(t *testing.T) {
 	}
 	if madeKeep != 7*24*time.Hour || madeMax != 200 || workKeep != 2*24*time.Hour {
 		t.Error("keep 7 days and 200 subtitles, work folders 2 days")
+	}
+}
+
+// A make keeps going through a Whisper outage: no upload is sent while it
+// can't be reached, and it carries on when GET /asr answers.
+func TestMakeWaitsForWhisper(t *testing.T) {
+	r := newMakeRig(t, 3*chunkMs)
+	d := &downServer{up: atomic.Bool{}}
+	d.up.Store(true)
+	r.m.queue.watchDown(d.probe, r.m.logf)
+	r.m.queue.probeEvery = 20 * time.Millisecond
+	r.av.onCall = func(n int) error {
+		if n == 2 {
+			d.up.Store(false)
+			go func() { time.Sleep(150 * time.Millisecond); d.up.Store(true) }()
+		}
+		if !d.up.Load() {
+			return fmt.Errorf("%w (dial tcp: connection refused)", errASRDown)
+		}
+		return nil
+	}
+	b, err := r.run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEveryLine(t, b, 3*chunkMs)
+	if r.av.calls != 4 { // chunk 2 twice
+		t.Errorf("%d uploads, want 4", r.av.calls)
+	}
+	if l := r.log.String(); strings.Count(l, "went away") != 1 || strings.Count(l, "is back after") != 1 {
+		t.Errorf("log: %s", l)
+	}
+}
+
+// Still down when HolyArrs stops waiting: the make fails and keeps its
+// finished chunks, and the next ask resumes from them.
+func TestMakeGivesUpWhileDown(t *testing.T) {
+	r := newMakeRig(t, 4*chunkMs)
+	d := &downServer{}
+	d.up.Store(true)
+	r.m.queue.watchDown(d.probe, r.m.logf)
+	r.m.queue.probeEvery = 20 * time.Millisecond
+	r.av.onCall = func(n int) error {
+		if n >= 3 {
+			d.up.Store(false)
+		}
+		if !d.up.Load() {
+			return fmt.Errorf("%w (dial tcp: connection refused)", errASRDown)
+		}
+		return nil
+	}
+	giveUp := time.Now().Add(150 * time.Millisecond)
+	_, err := r.m.make(withGiveUp(context.Background(), func() time.Time { return giveUp }), r.req)
+	if !errors.Is(err, errASRDown) || !strings.Contains(err.Error(), "chunk 3") || time.Now().Before(giveUp) {
+		t.Fatalf("got %v", err)
+	}
+	if r.av.calls != 3 {
+		t.Errorf("%d uploads, want 3 (none while down)", r.av.calls)
+	}
+	id := madeID(r.req.FileID, r.req.Key)
+	for i := range 2 {
+		if _, ok := r.m.cache.chunk(id, i); !ok {
+			t.Errorf("chunk %d was not kept", i+1)
+		}
+	}
+	r.av.onCall = nil
+	d.up.Store(true)
+	r.m.queue.cameBack()
+	b, err := r.run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEveryLine(t, b, 4*chunkMs)
+	if !strings.Contains(r.log.String(), "resuming at chunk 3 of about 4") {
+		t.Errorf("log: %s", r.log)
 	}
 }

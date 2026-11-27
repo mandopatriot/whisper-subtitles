@@ -88,6 +88,18 @@ server sends them.
   lossless one, leaving out commentary and audio description tracks. Its
   language is sent to the server.
 
+## When the Whisper server is away
+
+If the server can't be reached (connection refused, its name doesn't
+resolve, or a 502, 503 or 504 from a proxy in front of it), nothing fails:
+uploads stop, the plugin tries `GET /asr` every 30 seconds, and both
+writing and syncing carry on as soon as it answers. The log says once when
+it went away and once when it is back. A subtitle being written keeps its
+finished pieces, and fails only if the server is still away when HolyArrs
+stops waiting for it (an hour after it asked). A server that took an upload
+and never answered is different: uploads then pause for 5 minutes, doubling
+up to an hour.
+
 ## Setup
 
 1. Approve the Library folders that hold your movies and shows (read only).

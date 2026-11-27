@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -186,5 +188,120 @@ func TestASRQueuePauseAppliesToBoth(t *testing.T) {
 	release()
 	if d := time.Since(t0); d < 150*time.Millisecond {
 		t.Errorf("sync upload after %s, inside the doubled pause", d)
+	}
+}
+
+// downServer is a Whisper server that can't be reached until up is set.
+type downServer struct {
+	up              atomic.Bool
+	probes, inProbe atomic.Int32
+	maxIn           atomic.Int32
+}
+
+func (d *downServer) probe(ctx context.Context) error {
+	n := d.inProbe.Add(1)
+	defer d.inProbe.Add(-1)
+	if n > d.maxIn.Load() {
+		d.maxIn.Store(n)
+	}
+	d.probes.Add(1)
+	time.Sleep(2 * time.Millisecond)
+	if d.up.Load() {
+		return nil
+	}
+	return fmt.Errorf("%w: refused", ErrASR)
+}
+
+func downQueue(d *downServer, log *syncBuf) *asrQueue {
+	q := newASRQueue()
+	q.watchDown(d.probe, func(f string, a ...any) { fmt.Fprintf(log, f+"\n", a...) })
+	q.probeEvery = 20 * time.Millisecond
+	return q
+}
+
+// While the server can't be reached no upload is sent; one waiter tries
+// GET /asr at a time, the going and the coming back are logged once each,
+// and every upload goes out once it answers.
+func TestASRQueueWaitsWhileDown(t *testing.T) {
+	if asrProbeEvery != 30*time.Second {
+		t.Fatal("GET /asr is tried every 30 s")
+	}
+	d, log := &downServer{}, &syncBuf{}
+	q := downQueue(d, log)
+	var sends atomic.Int32
+	var sentWhileDown atomic.Bool
+	do := func() error {
+		sends.Add(1)
+		if !d.up.Load() {
+			return fmt.Errorf("%w (dial tcp: connection refused)", errASRDown)
+		}
+		return nil
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 3)
+	for i, p := range []asrPrio{prioMake, prioSync, prioSync} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- q.send(context.Background(), p, nil, nil, do)
+		}()
+		if i == 0 {
+			waitFor(t, "the server to be marked down", func() bool { q.mu.Lock(); defer q.mu.Unlock(); return q.down })
+		}
+	}
+	time.Sleep(150 * time.Millisecond)
+	if n := sends.Load(); n != 1 {
+		sentWhileDown.Store(true)
+		t.Errorf("%d uploads while the server was down, want only the first", n)
+	}
+	d.up.Store(true)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Error(err)
+		}
+	}
+	if sends.Load() != 4 {
+		t.Errorf("%d uploads, want the failed one again and the two waiting", sends.Load())
+	}
+	if d.probes.Load() < 3 || d.maxIn.Load() != 1 {
+		t.Errorf("%d probes, %d at once; want several, one at a time", d.probes.Load(), d.maxIn.Load())
+	}
+	l := log.String()
+	if strings.Count(l, "Whisper server went away") != 1 || strings.Count(l, "Whisper server is back after") != 1 ||
+		!strings.Contains(l, "trying GET /asr every 20ms") {
+		t.Errorf("log:\n%s", l)
+	}
+	// A timeout is not "down": returned at once, nothing waits.
+	err := q.send(context.Background(), prioSync, nil, nil, func() error { return errASRTimeout })
+	if !errors.Is(err, errASRTimeout) || q.down {
+		t.Errorf("timeout: %v, down %v", err, q.down)
+	}
+}
+
+// A waiter gives up at its giveUp time or when stopped; without watchDown
+// errASRDown is returned as it is.
+func TestASRQueueDownGiveUp(t *testing.T) {
+	d, log := &downServer{}, &syncBuf{}
+	q := downQueue(d, log)
+	down := func() error { return errASRDown }
+	start := time.Now()
+	err := q.send(context.Background(), prioMake, nil, func() time.Time { return start.Add(100 * time.Millisecond) }, down)
+	if !errors.Is(err, errASRDown) || !strings.Contains(err.Error(), "HolyArrs no longer waits") || time.Since(start) < 100*time.Millisecond {
+		t.Errorf("give up: %v after %s", err, time.Since(start))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := q.send(ctx, prioSync, nil, nil, down); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("stopped while down: %v", err)
+	}
+	if q.probing {
+		t.Error("a prober that left is still marked")
+	}
+	plain := newASRQueue()
+	calls := 0
+	if err := plain.send(context.Background(), prioSync, nil, nil, func() error { calls++; return errASRDown }); !errors.Is(err, errASRDown) || calls != 1 {
+		t.Errorf("without watchDown: %v after %d", err, calls)
 	}
 }

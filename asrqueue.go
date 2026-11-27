@@ -2,9 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
+
+// asrProbeEvery is how often GET /asr is tried while the server can't be
+// reached.
+const asrProbeEvery = 30 * time.Second
 
 // asrPrio orders uploads waiting for the Whisper server.
 type asrPrio int
@@ -35,12 +41,136 @@ type asrQueue struct {
 	until      time.Time
 	pause      time.Duration
 	first, max time.Duration
+
+	// While the server can't be reached (errASRDown), no upload is sent:
+	// one waiter tries probe every probeEvery, the others wait for it.
+	// changed is closed and replaced when the server is back or the prober
+	// leaves.
+	probe      func(context.Context) error
+	probeEvery time.Duration
+	logf       func(string, ...any)
+	down       bool
+	downSince  time.Time
+	probing    bool
+	changed    chan struct{}
 }
 
 func newASRQueue() *asrQueue { return newASRQueueWith(backoffFirst, backoffMax) }
 
 func newASRQueueWith(first, max time.Duration) *asrQueue {
-	return &asrQueue{first: first, max: max}
+	return &asrQueue{first: first, max: max, probeEvery: asrProbeEvery, changed: make(chan struct{})}
+}
+
+// watchDown makes uploads wait while the server can't be reached, trying
+// probe (GET /asr) until it answers. Without it errASRDown is returned as is.
+func (q *asrQueue) watchDown(probe func(context.Context) error, logf func(string, ...any)) {
+	q.probe, q.logf = probe, logf
+}
+
+// send runs do, one upload, with the slot held. While the server can't be
+// reached it waits until it answers and sends again; giveUp, when not nil,
+// is when to stop waiting and return errASRDown.
+func (q *asrQueue) send(ctx context.Context, p asrPrio, waiting func(asrPrio, int), giveUp func() time.Time, do func() error) error {
+	for {
+		if err := q.waitUp(ctx, giveUp); err != nil {
+			return err
+		}
+		release, err := q.acquireNoting(ctx, p, waiting)
+		if err != nil {
+			return err
+		}
+		err = do()
+		release()
+		if !errors.Is(err, errASRDown) || q.probe == nil || ctx.Err() != nil {
+			return err
+		}
+		q.wentDown(err)
+	}
+}
+
+func (q *asrQueue) wentDown(err error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if !q.down {
+		q.down, q.downSince = true, time.Now()
+		q.logf("Whisper server went away (%v); uploads wait, trying GET /asr every %s", err, q.probeEvery)
+	}
+}
+
+func (q *asrQueue) cameBack() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.down {
+		q.down = false
+		q.logf("Whisper server is back after %s; uploads carry on", time.Since(q.downSince).Round(time.Second))
+		q.signalLocked()
+	}
+}
+
+func (q *asrQueue) signalLocked() {
+	close(q.changed)
+	q.changed = make(chan struct{})
+}
+
+// waitUp returns once the server is not known to be down.
+func (q *asrQueue) waitUp(ctx context.Context, giveUp func() time.Time) error {
+	for {
+		q.mu.Lock()
+		if !q.down {
+			q.mu.Unlock()
+			return nil
+		}
+		changed, since, prober := q.changed, q.downSince, !q.probing
+		if prober {
+			q.probing = true
+		}
+		q.mu.Unlock()
+		err := q.waitTurn(ctx, giveUp, changed, prober, since)
+		if prober {
+			q.mu.Lock()
+			q.probing = false
+			q.signalLocked() // another waiter probes if this one left
+			q.mu.Unlock()
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func (q *asrQueue) waitTurn(ctx context.Context, giveUp func() time.Time, changed <-chan struct{}, prober bool, since time.Time) error {
+	gaveUp := func() error {
+		return fmt.Errorf("%w since %s, and HolyArrs no longer waits", errASRDown, since.Format("15:04:05"))
+	}
+	var deadline <-chan time.Time
+	if giveUp != nil {
+		d := time.Until(giveUp())
+		if d <= 0 {
+			return gaveUp()
+		}
+		t := time.NewTimer(d)
+		defer t.Stop()
+		deadline = t.C
+	}
+	var tick <-chan time.Time
+	if prober {
+		t := time.NewTimer(q.probeEvery)
+		defer t.Stop()
+		tick = t.C
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-deadline:
+		return gaveUp()
+	case <-changed:
+		return nil
+	case <-tick:
+		if q.probe(ctx) == nil {
+			q.cameBack()
+		}
+		return nil
+	}
 }
 
 // acquire waits for the upload slot and any pause after a timeout. The

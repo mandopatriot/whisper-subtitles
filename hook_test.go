@@ -449,3 +449,24 @@ func TestAppRunsSite(t *testing.T) {
 		t.Error("search reached Whisper")
 	}
 }
+
+// A make that can't reach Whisper answers an error once HolyArrs's wait is
+// over, not before.
+func TestSiteMakeDownPastWait(t *testing.T) {
+	r := newSiteRig(t, 300_000)
+	r.srv.makeWait = 200 * time.Millisecond
+	d := &downServer{}
+	r.m.queue.watchDown(d.probe, r.m.logf)
+	r.m.queue.probeEvery = 20 * time.Millisecond
+	r.av.mu.Lock()
+	r.av.onCall = func(int) error { return fmt.Errorf("%w (dial tcp: connection refused)", errASRDown) }
+	r.av.mu.Unlock()
+	start := time.Now()
+	a := r.hook.answer(r.hook.push("make", r.req))
+	if !strings.Contains(a.Error, "can't be reached") || !strings.Contains(a.Error, "HolyArrs no longer waits") || time.Since(start) < 200*time.Millisecond {
+		t.Errorf("answered %q after %s", a.Error, time.Since(start))
+	}
+	if r.av.calls != 1 {
+		t.Errorf("%d uploads while down, want 1", r.av.calls)
+	}
+}

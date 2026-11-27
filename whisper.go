@@ -121,6 +121,23 @@ var ErrASR = errors.New("whisper")
 // is never retried: the server may still be working on it, or be stuck.
 var errASRTimeout = fmt.Errorf("%w: no answer within the upload time limit", ErrASR)
 
+// errASRDown is a server that can't be reached: a refused connection, a
+// name that does not resolve, or a 502, 503 or 504 from a proxy in front of
+// it. Uploads wait until GET /asr answers again (asrQueue.send) instead of
+// failing.
+var errASRDown = fmt.Errorf("%w: the server can't be reached", ErrASR)
+
+// isUnreachable says whether err happened before the server took the
+// upload: dialling the server or the proxy, or looking up its name.
+func isUnreachable(err error) bool {
+	var dns *net.DNSError
+	if errors.As(err, &dns) {
+		return true
+	}
+	var op *net.OpError
+	return errors.As(err, &op) && (op.Op == "dial" || op.Op == "proxyconnect")
+}
+
 func isTimeout(err error) bool {
 	var ne net.Error
 	return errors.As(err, &ne) && ne.Timeout()
@@ -147,9 +164,11 @@ func (w *Whisper) Ready(ctx context.Context) error {
 }
 
 // Transcribe uploads the audio file at path and reads the segments; lang is
-// the audio track's language ("" when the track is untagged). A connection
-// failure or a 502, 503 or 504 is tried once more after RetryWait; a
-// timeout (errASRTimeout) and any other failure are returned at once.
+// the audio track's language ("" when the track is untagged). A server that
+// can't be reached is errASRDown, and one that took the upload and gave no
+// answer in time is errASRTimeout, both returned at once. A connection lost
+// during the upload is tried once more after RetryWait; any other failure is
+// returned at once.
 func (w *Whisper) Transcribe(ctx context.Context, path, lang string) (Transcript, error) {
 	return w.transcribe(ctx, w.HTTP, path, lang)
 }
@@ -218,6 +237,9 @@ func (w *Whisper) transcribeOnce(ctx context.Context, hc *http.Client, path, lan
 		if ctx.Err() != nil {
 			return tr, false, ctx.Err()
 		}
+		if isUnreachable(err) {
+			return tr, false, fmt.Errorf("%w (%s): %v", errASRDown, w.Base, err)
+		}
 		if isTimeout(err) {
 			return tr, false, fmt.Errorf("%w (%s): %v", errASRTimeout, hc.Timeout, err)
 		}
@@ -241,9 +263,9 @@ func (w *Whisper) transcribeOnce(ctx context.Context, hc *http.Client, path, lan
 		}
 		switch resp.StatusCode {
 		case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-			retry = true
+			return tr, false, fmt.Errorf("%w (%s answered %d: %s)", errASRDown, w.Base, resp.StatusCode, msg)
 		}
-		return tr, retry, fmt.Errorf("%w: %s answered %d: %s", ErrASR, w.Base, resp.StatusCode, msg)
+		return tr, false, fmt.Errorf("%w: %s answered %d: %s", ErrASR, w.Base, resp.StatusCode, msg)
 	}
 	if len(body) > maxASRBody {
 		return tr, false, fmt.Errorf("%w: the answer is over %d bytes", ErrASR, maxASRBody)
