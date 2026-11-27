@@ -601,3 +601,52 @@ func TestMakeGivesUpWhileDown(t *testing.T) {
 		t.Errorf("log: %s", r.log)
 	}
 }
+
+// A busy server makes a make wait out the backoff and send the chunk again,
+// keeping its pieces; it fails only when the pause would run past
+// HolyArrs's wait.
+func TestMakeWaitsOutBackoff(t *testing.T) {
+	r := newMakeRig(t, 3*chunkMs)
+	r.m.queue = newASRQueueWith(100*time.Millisecond, time.Second)
+	r.av.onCall = func(n int) error {
+		if n == 2 {
+			return fmt.Errorf("%w (10m0s): context deadline exceeded", errASRTimeout)
+		}
+		return nil
+	}
+	giveUp := time.Now().Add(time.Hour)
+	t0 := time.Now()
+	b, err := r.m.make(withGiveUp(context.Background(), func() time.Time { return giveUp }), r.req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEveryLine(t, b, 3*chunkMs)
+	if r.av.calls != 4 || time.Since(t0) < 100*time.Millisecond {
+		t.Errorf("%d uploads in %s; want 4, with the 100ms pause", r.av.calls, time.Since(t0))
+	}
+	if !strings.Contains(r.log.String(), "no uploads for 100ms, then the chunk at 00:01:30,000 is sent again") {
+		t.Errorf("log: %s", r.log)
+	}
+
+	// The pause would end after HolyArrs stops waiting: fail now, keep chunk 1.
+	r = newMakeRig(t, 3*chunkMs)
+	r.m.queue = newASRQueueWith(time.Hour, time.Hour)
+	r.av.onCall = func(n int) error {
+		if n >= 2 {
+			return fmt.Errorf("%w (10m0s): context deadline exceeded", errASRTimeout)
+		}
+		return nil
+	}
+	giveUp = time.Now().Add(30 * time.Minute)
+	t0 = time.Now()
+	_, err = r.m.make(withGiveUp(context.Background(), func() time.Time { return giveUp }), r.req)
+	if !errors.Is(err, errASRTimeout) || r.av.calls != 2 || time.Since(t0) > 5*time.Second {
+		t.Fatalf("got %v after %d uploads in %s", err, r.av.calls, time.Since(t0))
+	}
+	if _, ok := r.m.cache.chunk(madeID(r.req.FileID, r.req.Key), 0); !ok {
+		t.Error("chunk 1 was not kept")
+	}
+	if !strings.Contains(r.log.String(), "the pause of 1h0m0s runs past HolyArrs's wait") {
+		t.Errorf("log: %s", r.log)
+	}
+}

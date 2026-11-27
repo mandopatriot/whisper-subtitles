@@ -332,16 +332,27 @@ func (m *maker) chunk(ctx context.Context, v video, t media.Track, lang string, 
 		ownEnd = math.MaxInt64 // the last chunk keeps everything after start
 	}
 	var tr Transcript
-	err = m.queue.send(ctx, prioMake, nil, giveUpOf(ctx), func() error {
-		var err error
-		tr, err = m.asr.TranscribeChunk(ctx, f.Name(), lang)
-		return err
-	})
-	switch {
-	case errors.Is(err, errASRTimeout):
-		m.logf("Whisper gave no answer in time; no uploads for %s: %v", m.queue.timedOut(), err)
-		return chunkFile{}, err
-	case err != nil:
+	giveUp := giveUpOf(ctx)
+	for {
+		err = m.queue.send(ctx, prioMake, nil, giveUp, func() error {
+			var err error
+			tr, err = m.asr.TranscribeChunk(ctx, f.Name(), lang)
+			return err
+		})
+		if !errors.Is(err, errASRTimeout) {
+			break
+		}
+		// A busy or stuck server: wait out the backoff (the next send waits
+		// for it) and send the chunk again, unless HolyArrs stops waiting
+		// first. Finished chunks are kept either way.
+		pause := m.queue.timedOut()
+		if giveUp != nil && time.Now().Add(pause).After(giveUp()) {
+			m.logf("Whisper gave no answer in time, and the pause of %s runs past HolyArrs's wait: %v", pause, err)
+			return chunkFile{}, err
+		}
+		m.logf("Whisper gave no answer in time; no uploads for %s, then the chunk at %s is sent again: %v", pause, srtStamp(start), err)
+	}
+	if err != nil {
 		return chunkFile{}, err
 	}
 	m.queue.answered()

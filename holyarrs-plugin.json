@@ -17,6 +17,7 @@
   "licence": "AGPL-3.0",
   "category": "Subtitles",
   "support_url": "https://github.com/mandopatriot/whisper-subtitles/issues",
+  "icon_file": "icon.svg",
   "access": {
     "hosts": [],
     "folders": [

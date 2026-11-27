@@ -100,7 +100,9 @@ finished pieces, and fails only if the server is still away when HolyArrs
 stops waiting for it (an hour after it asked). A server that took an upload
 and never answered is different, and so is a 502, 503 or 504 while `GET
 /asr` answers at once (the server is up but busy): uploads then pause for 5
-minutes, doubling up to an hour.
+minutes, doubling up to an hour. A subtitle being written waits out the
+pause and goes on, keeping its pieces; it fails only if the pause would run
+past HolyArrs's hour. A sync stops and is tried again later.
 
 ## Setup
 

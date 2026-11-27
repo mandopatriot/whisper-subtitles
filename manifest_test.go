@@ -21,6 +21,7 @@ func TestManifest(t *testing.T) {
 		ID            string `json:"id"`
 		Name          string `json:"name"`
 		SupportURL    string `json:"support_url"`
+		IconFile      string `json:"icon_file"`
 		Version       string `json:"version"`
 		Licence       string `json:"licence"`
 		MinAppVersion string `json:"min_app_version"`
@@ -49,6 +50,19 @@ func TestManifest(t *testing.T) {
 	}
 	if m.SupportURL != "https://github.com/mandopatriot/whisper-subtitles/issues" {
 		t.Errorf("support_url = %q", m.SupportURL)
+	}
+	// The icon becomes a base64 data URL, which HolyArrs takes under 48 KB:
+	// the file stays well under 36 KB. A flat SVG with nothing loaded or run.
+	if m.IconFile != "icon.svg" {
+		t.Errorf("icon_file = %q", m.IconFile)
+	} else if icon, err := os.ReadFile(m.IconFile); err != nil {
+		t.Error(err)
+	} else {
+		low := strings.ToLower(string(icon))
+		if len(icon) > 36<<10 || !strings.HasPrefix(low, "<svg") || !strings.Contains(low, `viewbox="0 0 256 256"`) ||
+			strings.Contains(low, "<script") || strings.Contains(low, "href") || strings.Contains(low, "<image") || strings.Contains(low, "<foreignobject") {
+			t.Errorf("icon.svg: %d bytes; must be a square SVG under 36 KB with no scripts, links or images", len(icon))
+		}
 	}
 	if len(m.Access.Hosts) != 0 {
 		t.Errorf("hosts = %v, want none: the Whisper server is an owner host", m.Access.Hosts)
