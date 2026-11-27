@@ -51,6 +51,7 @@ type fakeAV struct {
 	extract []struct{ start, dur, max int64 }
 	langs   []string
 	paths   []string
+	names   []string          // uploadName of each upload
 	onCall  func(n int) error // optional: an error for upload n (from 1)
 	calls   int
 }
@@ -72,6 +73,7 @@ func (f *fakeAV) Transcribe(ctx context.Context, path, lang string) (Transcript,
 	n, start := f.calls, f.last
 	f.langs = append(f.langs, lang)
 	f.paths = append(f.paths, path)
+	f.names = append(f.names, uploadName(ctx))
 	hook := f.onCall
 	f.mu.Unlock()
 	if _, err := os.Stat(path); err != nil {
@@ -585,5 +587,18 @@ func TestCheckGatewayBusyBacksOff(t *testing.T) {
 	r.noSync(t)
 	if l := r.log.String(); !strings.Contains(l, "no uploads for 5m0s") || strings.Contains(l, "went away") {
 		t.Errorf("log: %s", l)
+	}
+}
+
+// Each sync upload is named by its window, for the Whisper client's log.
+func TestCheckNamesUploads(t *testing.T) {
+	cues := film(37, filmMs)
+	r := newRig(t, newFakeAV(cues, 1, 2500), cues)
+	if err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	n := len(media.WindowStarts(filmMs))
+	if len(r.av.names) != n || r.av.names[2] != fmt.Sprintf("subtitle 700 (en, Film/Film.en.srt), window 3 of %d", n) {
+		t.Errorf("names %q", r.av.names)
 	}
 }

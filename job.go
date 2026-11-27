@@ -209,7 +209,7 @@ func (k *checker) window(ctx context.Context, who string, v video, t media.Track
 			waitFrom = time.Time{}
 		}
 		var err error
-		tr, err = k.asr.Transcribe(ctx, f.Name(), lang)
+		tr, err = k.asr.Transcribe(withUploadName(ctx, who), f.Name(), lang)
 		return err
 	})
 	switch {

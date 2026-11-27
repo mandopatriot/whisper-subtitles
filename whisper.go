@@ -71,6 +71,24 @@ type Whisper struct {
 	Base      string // asr_url, such as http://whisper.example.lan:9000
 	HTTP      *http.Client
 	RetryWait time.Duration
+	// Logf, when set, logs an upload sent again after a dropped connection,
+	// named by uploadName(ctx).
+	Logf func(string, ...any)
+}
+
+type uploadKey struct{}
+
+// withUploadName names the upload made with ctx in the log, such as a
+// sync window or a make chunk.
+func withUploadName(ctx context.Context, name string) context.Context {
+	return context.WithValue(ctx, uploadKey{}, name)
+}
+
+func uploadName(ctx context.Context) string {
+	if s, _ := ctx.Value(uploadKey{}).(string); s != "" {
+		return s
+	}
+	return "an upload"
 }
 
 func newWhisper(base string) *Whisper {
@@ -153,6 +171,12 @@ func isTimeout(err error) bool {
 	return errors.As(err, &ne) && ne.Timeout()
 }
 
+func (w *Whisper) logf(f string, a ...any) {
+	if w.Logf != nil {
+		w.Logf(f, a...)
+	}
+}
+
 // Ready checks GET /asr, which answers "ready".
 func (w *Whisper) Ready(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -202,12 +226,16 @@ func (w *Whisper) transcribe(ctx context.Context, hc *http.Client, path, lang st
 	if err == nil || !retry {
 		return tr, err
 	}
+	w.logf("%s: the connection to Whisper dropped (%v); sending it again in %s", uploadName(ctx), err, w.RetryWait)
 	select {
 	case <-ctx.Done():
 		return Transcript{}, ctx.Err()
 	case <-time.After(w.RetryWait):
 	}
 	tr, _, err = w.transcribeOnce(ctx, hc, path, lang)
+	if err != nil && ctx.Err() == nil {
+		w.logf("%s: sent again, it failed too: %v", uploadName(ctx), err)
+	}
 	return tr, err
 }
 

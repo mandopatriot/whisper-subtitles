@@ -34,6 +34,7 @@ type filmAV struct {
 	last   media.Window
 	reads  []struct{ from, dur int64 }
 	langs  []string
+	names  []string // uploadName of each upload
 	calls  int
 	onCall func(n int) error
 	// extra adds segments to what Whisper hears in a window.
@@ -66,6 +67,7 @@ func (f *filmAV) TranscribeChunk(ctx context.Context, path, lang string) (Transc
 	f.calls++
 	n, win, hook, extra := f.calls, f.last, f.onCall, f.extra
 	f.langs = append(f.langs, lang)
+	f.names = append(f.names, uploadName(ctx))
 	f.mu.Unlock()
 	if _, err := os.Stat(path); err != nil {
 		return Transcript{}, fmt.Errorf("chunk file missing during upload: %v", err)
@@ -648,5 +650,16 @@ func TestMakeWaitsOutBackoff(t *testing.T) {
 	}
 	if !strings.Contains(r.log.String(), "the pause of 1h0m0s runs past HolyArrs's wait") {
 		t.Errorf("log: %s", r.log)
+	}
+}
+
+// Each make upload is named by its chunk, for the Whisper client's log.
+func TestMakeNamesUploads(t *testing.T) {
+	r := newMakeRig(t, 3*chunkMs)
+	if _, err := r.run(); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.av.names) != 3 || r.av.names[1] != "Film (2020).mkv, en, chunk 2 at 00:01:30,000" {
+		t.Errorf("names %q", r.av.names)
 	}
 }

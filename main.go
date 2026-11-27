@@ -71,6 +71,7 @@ func newApp(dataDir string, set Settings, ha *HolyArrs, folders []Folder, out io
 	k := &checker{ha: ha, queue: q, dataDir: dataDir, checkOnly: set.CheckOnly, logf: a.logf, open: openVideo}
 	if set.ASRURL != "" {
 		w := newWhisper(set.ASRURL)
+		w.Logf = a.logf
 		k.asr = w
 		q.watchDown(w.Ready, a.logf)
 		if set.Transcribe {

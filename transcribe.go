@@ -250,7 +250,8 @@ func (m *maker) make(ctx context.Context, r makeReq) ([]byte, error) {
 				m.logf("%s, %s: resuming at chunk %d of about %d (%s); %d chunks reused from before",
 					name, k.Lang, i+1, (dur+m.piece()-1)/m.piece(), srtStamp(start), reused)
 			}
-			ch, err = m.chunk(ctx, v, t, k.Lang, start, dur, segs)
+			cctx := withUploadName(ctx, fmt.Sprintf("%s, %s, chunk %d at %s", name, k.Lang, i+1, srtStamp(start)))
+			ch, err = m.chunk(cctx, v, t, k.Lang, start, dur, segs)
 			if err != nil {
 				return nil, fmt.Errorf("%s, %s, chunk %d at %s: %w", name, k.Lang, i+1, srtStamp(start), err)
 			}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -390,5 +391,55 @@ func TestWindowFiles(t *testing.T) {
 	}
 	if _, _, err := multipartFrame("b", `bad"name.mka`); err == nil {
 		t.Error("a quote in the upload name must be refused")
+	}
+}
+
+// A dropped connection logs the upload sent again, and a second line when
+// that fails too; a retry that works logs only the first.
+func TestTranscribeDroppedRetryLogged(t *testing.T) {
+	ctx := withUploadName(context.Background(), "subtitle 7 (en, Film.en.srt), window 3 of 12")
+	srv, _ := dropper(t)
+	w := newWhisper(srv.URL)
+	w.RetryWait = 10 * time.Millisecond
+	log := &syncBuf{}
+	w.Logf = func(f string, a ...any) { fmt.Fprintf(log, f+"\n", a...) }
+	if _, err := w.Transcribe(ctx, windowFile(t, []byte("mka")), ""); err == nil {
+		t.Fatal("no error from a server that always drops")
+	}
+	lines := strings.Split(strings.TrimSpace(log.String()), "\n")
+	if len(lines) != 2 ||
+		!strings.HasPrefix(lines[0], "subtitle 7 (en, Film.en.srt), window 3 of 12: the connection to Whisper dropped (") ||
+		!strings.HasSuffix(lines[0], "); sending it again in 10ms") ||
+		!strings.HasPrefix(lines[1], "subtitle 7 (en, Film.en.srt), window 3 of 12: sent again, it failed too: whisper: ") {
+		t.Errorf("log:\n%s", log)
+	}
+
+	// Dropped once, then answered.
+	fw := &fakeWhisper{t: t}
+	var n atomic.Int32
+	ok := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		if n.Add(1) == 1 {
+			io.Copy(io.Discard, r.Body)
+			if c, _, err := rw.(http.Hijacker).Hijack(); err == nil {
+				c.Close()
+			}
+			return
+		}
+		fw.ServeHTTP(rw, r)
+	}))
+	t.Cleanup(ok.Close)
+	w = newWhisper(ok.URL)
+	w.RetryWait = 10 * time.Millisecond
+	log2 := &syncBuf{}
+	w.Logf = func(f string, a ...any) { fmt.Fprintf(log2, f+"\n", a...) }
+	if _, err := w.Transcribe(withUploadName(context.Background(), "Film.mkv, en, chunk 4 at 00:04:30,000"), windowFile(t, []byte("mka")), ""); err != nil {
+		t.Fatal(err)
+	}
+	if l := log2.String(); strings.Count(l, "\n") != 1 || !strings.HasPrefix(l, "Film.mkv, en, chunk 4 at 00:04:30,000: the connection to Whisper dropped") {
+		t.Errorf("log:\n%s", l)
+	}
+	// Without a name, the line still reads.
+	if uploadName(context.Background()) != "an upload" {
+		t.Error("unnamed upload")
 	}
 }
