@@ -602,3 +602,51 @@ func TestCheckNamesUploads(t *testing.T) {
 		t.Errorf("names %q", r.av.names)
 	}
 }
+
+// Windows lost to the connection, then a refusal for too few windows: cut
+// off, for a retry, not left alone. Without lost windows, or with a refusal
+// they could not have caused, it is left alone.
+func TestCheckLostWindowsCutOff(t *testing.T) {
+	lostErr := fmt.Errorf("%w: upload to http://whisper.test:9000 failed: read: connection reset by peer", errASRLost)
+	n := len(media.WindowStarts(filmMs))
+	for _, c := range []struct {
+		name   string
+		lose   int // the first windows lost
+		french bool
+		cutOff bool
+	}{
+		{"8 lost: too few agreeing", 8, false, true},
+		{"10 lost: too few in the language", 10, false, true},
+		{"none lost, French audio", 0, true, false},
+		{"2 lost, French audio: they could not have made up 4", 2, true, false},
+	} {
+		cues := film(39, filmMs)
+		av := newFakeAV(cues, 1, 2500)
+		if c.french {
+			for k, tr := range av.heard {
+				tr.Language = "fr"
+				av.heard[k] = tr
+			}
+		}
+		r := newRig(t, av, cues)
+		lose := c.lose
+		r.av.onCall = func(k int) error {
+			if k <= lose {
+				return lostErr
+			}
+			return nil
+		}
+		err := r.run()
+		if got := errors.Is(err, errCutOff); got != c.cutOff || errors.Is(err, errRule) == c.cutOff {
+			t.Errorf("%s: %v", c.name, err)
+		}
+		if c.cutOff && !strings.Contains(err.Error(), fmt.Sprintf("%d of %d windows were lost to the connection", lose, n)) {
+			t.Errorf("%s: %v", c.name, err)
+		}
+		r.noSync(t)
+	}
+	// A cut-off check is retried by the app; a left-alone one is not.
+	if !stoppedByLimit(context.Background(), fmt.Errorf("%w: 8 of 12 windows lost", errCutOff)) || stoppedByLimit(context.Background(), fmt.Errorf("%w: x", errRule)) {
+		t.Error("stoppedByLimit")
+	}
+}

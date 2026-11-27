@@ -155,6 +155,21 @@ type gatewayError struct{}
 func (gatewayError) Error() string   { return "whisper: a proxy in front of the server answered" }
 func (gatewayError) Is(t error) bool { return t == errASRDown || t == ErrASR }
 
+// errASRLost is a connection lost during an upload (reset, EOF), and
+// errASRForbidden a 403. Through HolyArrs's proxy a stopped server looks
+// like either: the proxy can't connect, answers 403 with an empty body and
+// closes. After one, GET /asr is tried (asrQueue.send): if it fails too, the
+// server is away.
+var (
+	errASRLost      error = markErr("whisper: the connection was lost")
+	errASRForbidden error = markErr("whisper: 403 Forbidden")
+)
+
+type markErr string
+
+func (e markErr) Error() string   { return string(e) }
+func (e markErr) Is(t error) bool { return t == ErrASR }
+
 // isUnreachable says whether err happened before the server took the
 // upload: dialling the server or the proxy, or looking up its name.
 func isUnreachable(err error) bool {
@@ -281,7 +296,7 @@ func (w *Whisper) transcribeOnce(ctx context.Context, hc *http.Client, path, lan
 		if isTimeout(err) {
 			return tr, false, fmt.Errorf("%w (%s): %v", errASRTimeout, hc.Timeout, err)
 		}
-		return tr, true, fmt.Errorf("%w: upload to %s failed: %v", ErrASR, w.Base, err)
+		return tr, true, fmt.Errorf("%w: upload to %s failed: %v", errASRLost, w.Base, err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxASRBody+1))
@@ -292,7 +307,7 @@ func (w *Whisper) transcribeOnce(ctx context.Context, hc *http.Client, path, lan
 		if isTimeout(err) {
 			return tr, false, fmt.Errorf("%w (%s): %v", errASRTimeout, hc.Timeout, err)
 		}
-		return tr, true, fmt.Errorf("%w: reading the answer: %v", ErrASR, err)
+		return tr, true, fmt.Errorf("%w: reading the answer: %v", errASRLost, err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		msg := strings.TrimSpace(string(body))
@@ -302,6 +317,8 @@ func (w *Whisper) transcribeOnce(ctx context.Context, hc *http.Client, path, lan
 		switch resp.StatusCode {
 		case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 			return tr, false, fmt.Errorf("%w %d for %s: %s", errASRGateway, resp.StatusCode, w.Base, msg)
+		case http.StatusForbidden:
+			return tr, false, fmt.Errorf("%w from %s: %q", errASRForbidden, w.Base, msg)
 		}
 		return tr, false, fmt.Errorf("%w: %s answered %d: %s", ErrASR, w.Base, resp.StatusCode, msg)
 	}

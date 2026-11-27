@@ -58,6 +58,9 @@ type FitResult struct {
 	FromFPS  float64 // 0 when no frame-rate change
 	ToFPS    float64
 	Reason   string
+	// TooFew is a refusal for too few usable or agreeing windows: one that
+	// lost windows could have caused.
+	TooFew bool
 	// Numbers behind the decision, for the log and the evaluation.
 	LangWindows, Usable, Inliers, Anchors int
 	SpreadMs                              int64
@@ -394,13 +397,17 @@ func fitSubtitle(cues []Cue, subLang string, wins []WindowText) FitResult {
 		r.Reason = fmt.Sprintf(f, a...)
 		return r
 	}
+	tooFew := func(f string, a ...any) FitResult {
+		r.TooFew = true
+		return fail(f, a...)
+	}
 	switch {
 	case r.Usable < fitMinUsable:
-		return fail("only %d windows have %d or more matched lines (need %d)", r.Usable, fitMinAnchors, fitMinUsable)
+		return tooFew("only %d windows have %d or more matched lines (need %d)", r.Usable, fitMinAnchors, fitMinUsable)
 	case r.Inliers < fitMinInliers || float64(r.Inliers) < fitMinInlierShare*float64(r.Usable):
-		return fail("only %d of %d usable windows agree on the offset (need %d and %.0f%%)", r.Inliers, r.Usable, fitMinInliers, fitMinInlierShare*100)
+		return tooFew("only %d of %d usable windows agree on the offset (need %d and %.0f%%)", r.Inliers, r.Usable, fitMinInliers, fitMinInlierShare*100)
 	case best.k != 1 && r.Inliers < fitMinInliersFPS:
-		return fail("a frame-rate change needs %d agreeing windows, has %d", fitMinInliersFPS, r.Inliers)
+		return tooFew("a frame-rate change needs %d agreeing windows, has %d", fitMinInliersFPS, r.Inliers)
 	case best.k == 1 && abs64(r.OffsetMs) < minShift:
 		return fail("already in sync (offset %d ms is under %d ms with %s timings)", r.OffsetMs, minShift, r.Timing)
 	case r.FitAfter < fitMinFitShare:

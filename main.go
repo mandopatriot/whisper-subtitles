@@ -247,13 +247,14 @@ func (a *app) worker(ctx context.Context) {
 }
 
 // stoppedByLimit says whether err, or the job's ctx, means the job was cut
-// off by the time limit or a Whisper timeout, rather than checked: such a
-// sync is tried again. A subtitle a rule left alone never is.
+// off by the time limit, a Whisper timeout or windows lost to the connection
+// (errCutOff), rather than checked: such a sync is tried again. A subtitle a
+// rule left alone never is.
 func stoppedByLimit(ctx context.Context, err error) bool {
 	if errors.Is(err, errRule) {
 		return false
 	}
-	return errors.Is(err, errASRTimeout) || errors.Is(ctx.Err(), context.DeadlineExceeded)
+	return errors.Is(err, errASRTimeout) || errors.Is(err, errCutOff) || errors.Is(ctx.Err(), context.DeadlineExceeded)
 }
 
 // retryOf is the job that tries c again by itself.

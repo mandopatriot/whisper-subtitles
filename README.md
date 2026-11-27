@@ -90,19 +90,22 @@ server sends them.
 
 ## When the Whisper server is away
 
-If the server can't be reached (connection refused, its name doesn't
-resolve, or a 502, 503 or 504 from a proxy in front of it while `GET /asr`
-fails too), nothing fails:
-uploads stop, the plugin tries `GET /asr` every 30 seconds, and both
-writing and syncing carry on as soon as it answers. The log says once when
-it went away and once when it is back. A subtitle being written keeps its
-finished pieces, and fails only if the server is still away when HolyArrs
-stops waiting for it (an hour after it asked). A server that took an upload
-and never answered is different, and so is a 502, 503 or 504 while `GET
-/asr` answers at once (the server is up but busy): uploads then pause for 5
-minutes, doubling up to an hour. A subtitle being written waits out the
-pause and goes on, keeping its pieces; it fails only if the pause would run
-past HolyArrs's hour. A sync stops and is tried again later.
+If the server can't be reached, nothing fails. That is a refused
+connection or a name that doesn't resolve, or a lost connection, a 403 or
+a 502, 503 or 504 while `GET /asr` fails too. (Through HolyArrs's proxy a
+stopped server shows up as an empty 403 or a reset connection, never as
+refused.) Then uploads stop, the plugin tries `GET /asr` every 30 seconds,
+and both writing and syncing carry on as soon as it answers. The log says
+once when it went away and once when it is back. A subtitle being written
+keeps its finished pieces, and fails only if the server is still away when
+HolyArrs stops waiting for it (an hour after it asked). A server that took
+an upload and never answered is different, and so is a 502, 503 or 504
+while `GET /asr` answers at once (the server is up but busy): uploads then
+pause for 5 minutes, doubling up to an hour. A subtitle being written
+waits out the pause and goes on, keeping its pieces; it fails only if the
+pause would run past HolyArrs's hour. A sync stops and is tried again
+later, and so is one that lost windows to the connection and then had too
+few windows to decide: it is not counted as left alone.
 
 ## Setup
 

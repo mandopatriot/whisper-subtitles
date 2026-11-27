@@ -68,9 +68,11 @@ func (q *asrQueue) watchDown(probe func(context.Context) error, logf func(string
 }
 
 // send runs do, one upload, with the slot held. While the server can't be
-// reached it waits until it answers and sends again. A 502, 503 or 504
-// while GET /asr answers is a busy server: returned as errASRTimeout, for
-// the backoff. giveUp, when not nil, is when to stop waiting and return
+// reached it waits until it answers and sends again. After a lost
+// connection, a 403 or a 502, 503 or 504, GET /asr is tried once: if it
+// fails too the server is away, waited for the same way. If it answers, a
+// 502, 503 or 504 is a busy server, returned as errASRTimeout for the
+// backoff, and the others are returned as they are. giveUp, when not nil, is when to stop waiting and return
 // errASRDown.
 func (q *asrQueue) send(ctx context.Context, p asrPrio, waiting func(asrPrio, int), giveUp func() time.Time, do func() error) error {
 	for {
@@ -83,12 +85,25 @@ func (q *asrQueue) send(ctx context.Context, p asrPrio, waiting func(asrPrio, in
 		}
 		err = do()
 		release()
-		if !errors.Is(err, errASRDown) || q.probe == nil || ctx.Err() != nil {
+		if err == nil || q.probe == nil || ctx.Err() != nil {
 			return err
 		}
-		if errors.Is(err, errASRGateway) && q.probe(ctx) == nil {
-			// Up but busy: a timeout, with its backoff, not an outage.
-			return fmt.Errorf("%w (%v, but GET /asr answers: the server is busy)", errASRTimeout, err)
+		switch {
+		case errors.Is(err, errASRGateway), errors.Is(err, errASRLost), errors.Is(err, errASRForbidden):
+			// Away, or only this upload failed? GET /asr says.
+			if q.probe(ctx) == nil {
+				if errors.Is(err, errASRGateway) {
+					// Up but busy: a timeout, with its backoff.
+					return fmt.Errorf("%w (%v, but GET /asr answers: the server is busy)", errASRTimeout, err)
+				}
+				return err
+			}
+			if ctx.Err() != nil {
+				return err
+			}
+		case errors.Is(err, errASRDown):
+		default:
+			return err
 		}
 		q.wentDown(err)
 	}
@@ -99,7 +114,11 @@ func (q *asrQueue) wentDown(err error) {
 	defer q.mu.Unlock()
 	if !q.down {
 		q.down, q.downSince = true, time.Now()
-		q.logf("Whisper server went away (%v); uploads wait, trying GET /asr every %s", err, q.probeEvery)
+		hint := ""
+		if errors.Is(err, errASRForbidden) {
+			hint = " (through HolyArrs's proxy a 403 means it could not connect: the server is stopped, or is not one of your own hosts)"
+		}
+		q.logf("Whisper server went away (%v)%s; uploads wait, trying GET /asr every %s", err, hint, q.probeEvery)
 	}
 }
 

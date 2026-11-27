@@ -443,3 +443,42 @@ func TestTranscribeDroppedRetryLogged(t *testing.T) {
 		t.Error("unnamed upload")
 	}
 }
+
+// holyArrsProxy is HolyArrs's plugin proxy in front of fw: while stopped
+// is set it can't connect, so it answers 403 with an empty body and closes,
+// as netproxy.go's "could not connect" path does.
+func holyArrsProxy(t *testing.T, fw http.Handler, stopped *atomic.Bool) *httptest.Server {
+	p := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if stopped.Load() {
+			w.Header().Set("Connection", "close")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		fw.ServeHTTP(w, r)
+	}))
+	t.Cleanup(p.Close)
+	return p
+}
+
+func viaProxy(t *testing.T, p *httptest.Server) *Whisper {
+	w := newWhisper("http://whisper.example.lan:9000")
+	pu, _ := url.Parse(p.URL)
+	w.HTTP.Transport.(*http.Transport).Proxy = http.ProxyURL(pu)
+	w.RetryWait = 10 * time.Millisecond
+	return w
+}
+
+// The proxy's empty 403 (or the connection it closes mid-upload) is a 403 or
+// a lost connection, never "connection refused"; GET /asr fails the same way.
+func TestTranscribeProxyEmpty403(t *testing.T) {
+	var stopped atomic.Bool
+	stopped.Store(true)
+	w := viaProxy(t, holyArrsProxy(t, &fakeWhisper{t: t}, &stopped))
+	_, err := w.Transcribe(context.Background(), windowFile(t, bytes.Repeat([]byte("mka!"), 50_000)), "")
+	if !(errors.Is(err, errASRForbidden) || errors.Is(err, errASRLost)) || !errors.Is(err, ErrASR) || errors.Is(err, errASRDown) {
+		t.Errorf("upload through a proxy that can't connect: %v", err)
+	}
+	if err := w.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "403") {
+		t.Errorf("GET /asr through it: %v", err)
+	}
+}

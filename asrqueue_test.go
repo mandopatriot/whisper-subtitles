@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -334,5 +335,67 @@ func TestASRQueueGatewayBusyOrAway(t *testing.T) {
 	})
 	if err != nil || calls != 2 || strings.Count(log.String(), "went away") != 1 || strings.Count(log.String(), "is back after") != 1 {
 		t.Errorf("away: %v after %d sends; log %s", err, calls, log)
+	}
+}
+
+// After a lost connection or a 403, GET /asr decides: answered, the error
+// is returned as it is; failing too, the server is away and the upload waits
+// and goes out again.
+func TestASRQueueLostOrForbidden(t *testing.T) {
+	for _, e := range []error{
+		fmt.Errorf("%w: upload to http://whisper.test:9000 failed: read: connection reset by peer", errASRLost),
+		fmt.Errorf("%w from http://whisper.test:9000: %q", errASRForbidden, ""),
+	} {
+		d, log := &downServer{}, &syncBuf{}
+		d.up.Store(true)
+		q := downQueue(d, log)
+		calls := 0
+		err := q.send(context.Background(), prioSync, nil, nil, func() error { calls++; return e })
+		if err != e || calls != 1 || d.probes.Load() != 1 || q.down || log.String() != "" {
+			t.Errorf("%v with GET /asr up: %v after %d sends, %d probes; log %s", e, err, calls, d.probes.Load(), log)
+		}
+		d.up.Store(false)
+		calls = 0
+		go func() { time.Sleep(100 * time.Millisecond); d.up.Store(true) }()
+		err = q.send(context.Background(), prioSync, nil, nil, func() error {
+			if calls++; calls == 1 {
+				return e
+			}
+			return nil
+		})
+		l := log.String()
+		if err != nil || calls != 2 || strings.Count(l, "went away") != 1 || strings.Count(l, "is back after") != 1 {
+			t.Errorf("%v with GET /asr down: %v after %d sends; log %s", e, err, calls, l)
+		}
+		if hint := strings.Contains(l, "is not one of your own hosts"); hint != errors.Is(e, errASRForbidden) {
+			t.Errorf("%v: proxy hint %v; log %s", e, hint, l)
+		}
+	}
+}
+
+// End to end through HolyArrs's proxy: Whisper stops mid-run, the upload
+// gets the proxy's empty 403 (or a reset), GET /asr gets it too, and the
+// upload waits and goes out when Whisper is back.
+func TestASRQueueThroughStoppedProxy(t *testing.T) {
+	var stopped atomic.Bool
+	stopped.Store(true)
+	w := viaProxy(t, holyArrsProxy(t, &fakeWhisper{t: t}, &stopped))
+	log := &syncBuf{}
+	q := newASRQueue()
+	q.watchDown(w.Ready, func(f string, a ...any) { fmt.Fprintf(log, f+"\n", a...) })
+	q.probeEvery = 20 * time.Millisecond
+	go func() { time.Sleep(150 * time.Millisecond); stopped.Store(false) }()
+	path := windowFile(t, bytes.Repeat([]byte("mka!"), 50_000))
+	var tr Transcript
+	err := q.send(context.Background(), prioSync, nil, nil, func() error {
+		var err error
+		tr, err = w.Transcribe(context.Background(), path, "")
+		return err
+	})
+	if err != nil || len(tr.Segments) == 0 {
+		t.Fatalf("%v, %d segments", err, len(tr.Segments))
+	}
+	if l := log.String(); strings.Count(l, "went away") != 1 || strings.Count(l, "is back after") != 1 {
+		t.Errorf("log: %s", l)
 	}
 }

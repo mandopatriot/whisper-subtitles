@@ -123,6 +123,13 @@ func (k *checker) check(ctx context.Context, c Candidate, loc Located) error {
 	}
 	r := fitSubtitle(cues, c.Language, wins)
 	if !r.Sync {
+		// Too few windows, when lost windows could be why: the language rule
+		// counts only when the lost ones could have made up the shortfall.
+		lost, first := lostWindows(wins)
+		langShort := r.LangWindows < fitMinLangWindows && r.LangWindows+lost >= fitMinLangWindows
+		if lost > 0 && (r.TooFew || langShort) {
+			return fmt.Errorf("%w: %d of %d windows were lost to the connection (%v); %s", errCutOff, lost, len(wins), first, r)
+		}
 		return fmt.Errorf("%w: %s", errRule, r)
 	}
 	fix := SyncFix{OffsetMS: r.OffsetMs, FromFPS: r.FromFPS, ToFPS: r.ToFPS}
@@ -139,6 +146,25 @@ func (k *checker) check(ctx context.Context, c Candidate, loc Located) error {
 	}
 	k.logf("%s: synced %s, now subtitle %d: %s", c, fix, nr.ID, r)
 	return nil
+}
+
+// errCutOff is a check that could not finish because windows were lost to
+// the connection to Whisper: it is tried again later, not left alone.
+var errCutOff = errors.New("cut off")
+
+// lostWindows counts the windows lost to the connection to Whisper (dropped,
+// away, busy or refused by the proxy), with the first such error.
+func lostWindows(wins []WindowText) (n int, first error) {
+	for _, w := range wins {
+		e := w.Err
+		if errors.Is(e, errASRLost) || errors.Is(e, errASRDown) || errors.Is(e, errASRTimeout) || errors.Is(e, errASRForbidden) {
+			if n == 0 {
+				first = e
+			}
+			n++
+		}
+	}
+	return n, first
 }
 
 // listen sends the windows of track t to Whisper and returns what it heard
