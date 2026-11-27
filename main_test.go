@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -258,27 +259,219 @@ func TestRunJobsAtOnce(t *testing.T) {
 	}
 }
 
-func TestRunJobTimeout(t *testing.T) {
-	dir := t.TempDir()
-	a, log := testApp(t, readySettings(), dir)
-	a.jobTimeout = 50 * time.Millisecond
-	a.check = func(ctx context.Context, c Candidate, loc Located) error {
-		<-ctx.Done()
-		return ctx.Err()
-	}
+// startApp runs a with no more event lines than given; stop ends it.
+func startApp(t *testing.T, a *app, lines ...string) (stop func()) {
+	t.Helper()
 	pr, pw := io.Pipe()
 	done := make(chan error, 1)
 	go func() { done <- a.run(context.Background(), pr) }()
-	io.WriteString(pw, arrivalLine)
-	waitFor(t, "the timed-out job to be dropped", func() bool {
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		return a.st.Highest == 5120 && len(a.st.Pending) == 0
-	})
-	pw.Close()
-	<-done
-	if !strings.Contains(log.String(), "time limit") {
-		t.Errorf("log does not name the time limit:\n%s", log)
+	for _, l := range lines {
+		io.WriteString(pw, l)
+	}
+	return func() {
+		pw.Close()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}
+}
+
+func pendingOf(a *app) []Job {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]Job(nil), a.st.Pending...)
+}
+
+// A sync cut off by the time limit is tried again by itself, twice, each
+// after a longer wait, and then given up.
+func TestRunJobTimeoutRetries(t *testing.T) {
+	if maxRetries != 2 || len(retryWaits) != 2 || retryWaits[0] != 30*time.Minute || retryWaits[1] != 2*time.Hour {
+		t.Fatal("retries must be 2, after 30 min and then 2 h")
+	}
+	dir := t.TempDir()
+	a, log := testApp(t, readySettings(), dir)
+	a.jobTimeout = 50 * time.Millisecond
+	a.retryWaits = []time.Duration{150 * time.Millisecond, 300 * time.Millisecond}
+	var mu sync.Mutex
+	var at []time.Time
+	a.check = func(ctx context.Context, c Candidate, loc Located) error {
+		<-ctx.Done()
+		mu.Lock()
+		at = append(at, time.Now())
+		mu.Unlock()
+		return ctx.Err()
+	}
+	stop := startApp(t, a, arrivalLine)
+	waitFor(t, "three tries", func() bool { mu.Lock(); defer mu.Unlock(); return len(at) == 3 })
+	waitFor(t, "the queue to empty", func() bool { return len(pendingOf(a)) == 0 })
+	stop()
+	if g1, g2 := at[1].Sub(at[0]), at[2].Sub(at[1]); g1 < 150*time.Millisecond || g2 < 300*time.Millisecond {
+		t.Errorf("tries %s and %s apart, want at least 150ms and 300ms", g1, g2)
+	}
+	l := log.String()
+	for _, want := range []string{
+		"event 5120, title 42, file 311, Arrival (2016)/Arrival (2016).en.srt: stopped at the time limit of 50ms",
+		"event 5120, title 42, file 311, Arrival (2016)/Arrival (2016).en.srt, retry 1 of 2: tried again in 150ms",
+		"retry 1 of 2: stopped at the time limit",
+		"retry 2 of 2: tried again in 300ms",
+		"not tried again, after 2 retries",
+	} {
+		if !strings.Contains(l, want) {
+			t.Errorf("log lacks %q:\n%s", want, l)
+		}
+	}
+	time.Sleep(400 * time.Millisecond)
+	if mu.Lock(); len(at) != 3 {
+		t.Errorf("%d tries, want 3", len(at))
+	}
+	mu.Unlock()
+}
+
+// A Whisper timeout queues a retry in state.json; it survives a restart
+// and runs once, when due.
+func TestRunWhisperTimeoutRetryAfterRestart(t *testing.T) {
+	dir := t.TempDir()
+	a, _ := testApp(t, readySettings(), dir)
+	a.retryWaits = []time.Duration{300 * time.Millisecond, time.Hour}
+	var calls atomic.Int32
+	a.check = func(ctx context.Context, c Candidate, loc Located) error {
+		calls.Add(1)
+		return fmt.Errorf("%w (10m0s): context deadline exceeded", errASRTimeout)
+	}
+	stop := startApp(t, a, arrivalLine)
+	waitFor(t, "the retry to be queued", func() bool { p := pendingOf(a); return len(p) == 1 && p[0].Tries == 1 })
+	stop()
+	st, _ := loadState(dir)
+	if len(st.Pending) != 1 || st.Pending[0].Tries != 1 || st.Pending[0].NotBefore <= time.Now().UnixMilli() ||
+		st.Pending[0].Path != "Arrival (2016)/Arrival (2016).en.srt" || st.Pending[0].EventID != 5120 {
+		t.Fatalf("saved %+v, want the retry waiting", st.Pending)
+	}
+	due := time.UnixMilli(st.Pending[0].NotBefore)
+	b, log := testApp(t, readySettings(), dir)
+	var ranAt []time.Time
+	var mu sync.Mutex
+	b.check = func(ctx context.Context, c Candidate, loc Located) error {
+		mu.Lock()
+		ranAt = append(ranAt, time.Now())
+		mu.Unlock()
+		return nil
+	}
+	stop = startApp(t, b, arrivalLine) // the replayed event is skipped
+	waitFor(t, "the retry", func() bool { return len(pendingOf(b)) == 0 })
+	time.Sleep(100 * time.Millisecond)
+	stop()
+	if calls.Load() != 1 || len(ranAt) != 1 || ranAt[0].Before(due) {
+		t.Errorf("first start %d tries, second %v (due %v); want one each, the retry when due", calls.Load(), ranAt, due)
+	}
+	if !strings.Contains(log.String(), "already handled") {
+		t.Errorf("log:\n%s", log)
+	}
+}
+
+// A subtitle checked and left alone, or failing for another reason, is not
+// tried again.
+func TestRunLeftAloneNotRetried(t *testing.T) {
+	for _, e := range []error{
+		fmt.Errorf("%w: no confident fit", errRule),
+		fmt.Errorf("%w: the subtitle is in another language than the sound", errRule),
+		fmt.Errorf("%w: server said 500", ErrASR),
+	} {
+		dir := t.TempDir()
+		a, log := testApp(t, readySettings(), dir)
+		a.retryWaits = []time.Duration{time.Millisecond, time.Millisecond}
+		var calls atomic.Int32
+		a.check = func(ctx context.Context, c Candidate, loc Located) error { calls.Add(1); return e }
+		stop := startApp(t, a, arrivalLine)
+		waitFor(t, "the job", func() bool { return calls.Load() == 1 && len(pendingOf(a)) == 0 })
+		time.Sleep(50 * time.Millisecond)
+		stop()
+		if calls.Load() != 1 || strings.Contains(log.String(), "tried again") {
+			t.Errorf("%v: %d tries; log:\n%s", e, calls.Load(), log)
+		}
+	}
+}
+
+// A check_titles run retries only the subtitle that was cut off, still
+// without the score rule.
+func TestRunCheckTitlesRetriesOne(t *testing.T) {
+	dir := t.TempDir()
+	set := readySettings()
+	set.CheckTitlesRaw, set.CheckTitles = "42", []int64{42}
+	a, log := testApp(t, set, dir)
+	a.retryWaits = []time.Duration{50 * time.Millisecond, time.Hour}
+	var mu sync.Mutex
+	var seen []string
+	a.check = func(ctx context.Context, c Candidate, loc Located) error {
+		mu.Lock()
+		seen = append(seen, c.SubRel)
+		n := len(seen)
+		mu.Unlock()
+		if n == 1 && strings.HasSuffix(c.SubRel, ".en.srt") {
+			return fmt.Errorf("%w: no answer", errASRTimeout)
+		}
+		return nil
+	}
+	stop := startApp(t, a)
+	waitFor(t, "the retry", func() bool { mu.Lock(); defer mu.Unlock(); return len(seen) == 3 })
+	waitFor(t, "the queue to empty", func() bool { return len(pendingOf(a)) == 0 })
+	stop()
+	want := []string{"Arrival (2016)/Arrival (2016).en.srt", "Arrival (2016)/Arrival (2016).nl.vtt", "Arrival (2016)/Arrival (2016).en.srt"}
+	if strings.Join(seen, "|") != strings.Join(want, "|") {
+		t.Errorf("checked %v, want %v", seen, want)
+	}
+	if !strings.Contains(log.String(), "title 42, file 311, Arrival (2016)/Arrival (2016).en.srt (check_titles), retry 1 of 2: tried again in 50ms") {
+		t.Errorf("log:\n%s", log)
+	}
+}
+
+// Syncs waiting in state.json when the plugin stops are picked up at the
+// next start, each run once, even with two at a time.
+func TestRestartWithSyncsWaiting(t *testing.T) {
+	dir := t.TempDir()
+	en, nl := "Arrival (2016)/Arrival (2016).en.srt", "Arrival (2016)/Arrival (2016).nl.vtt"
+	soon := time.Now().Add(300 * time.Millisecond)
+	st := State{Highest: 5121, Pending: []Job{
+		{EventID: 5120, TitleID: 42, Kind: "movie", FileID: 311, Path: en},
+		{EventID: 5121, TitleID: 42, Kind: "movie", FileID: 311, Path: nl},
+		{EventID: 5119, TitleID: 42, Kind: "movie", FileID: 311, Path: en, Tries: 1, NotBefore: soon.UnixMilli()},
+	}}
+	if err := st.save(dir); err != nil {
+		t.Fatal(err)
+	}
+	set := readySettings()
+	set.Jobs = 2
+	a, log := testApp(t, set, dir)
+	var mu sync.Mutex
+	runs := map[string][]time.Time{}
+	a.check = func(ctx context.Context, c Candidate, loc Located) error {
+		time.Sleep(20 * time.Millisecond)
+		mu.Lock()
+		runs[c.SubRel] = append(runs[c.SubRel], time.Now())
+		mu.Unlock()
+		return nil
+	}
+	stop := startApp(t, a, arrivalLine) // 5120 again, replayed: skipped
+	waitFor(t, "every waiting sync", func() bool { return len(pendingOf(a)) == 0 })
+	time.Sleep(100 * time.Millisecond)
+	stop()
+	if len(runs[en]) != 2 || len(runs[nl]) != 1 {
+		t.Fatalf("ran %v; want en twice (event 5120 and the retry of 5119) and nl once", runs)
+	}
+	if last := runs[en][1]; last.Before(soon) {
+		t.Errorf("the retry ran at %v, before it was due at %v", last, soon)
+	}
+	if !strings.Contains(log.String(), "already handled") {
+		t.Errorf("log:\n%s", log)
+	}
+	// A third start finds nothing to do.
+	b, _ := testApp(t, set, dir)
+	var again atomic.Int32
+	b.check = func(ctx context.Context, c Candidate, loc Located) error { again.Add(1); return nil }
+	stop = startApp(t, b)
+	time.Sleep(100 * time.Millisecond)
+	stop()
+	if again.Load() != 0 {
+		t.Errorf("%d syncs ran again after a clean stop", again.Load())
 	}
 }
 

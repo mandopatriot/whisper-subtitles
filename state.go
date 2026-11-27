@@ -13,7 +13,9 @@ import (
 const maxPending = 500
 
 // Job is one piece of work: a subtitle from an event, or every subtitle of a
-// title for a check_titles run (FileID 0).
+// title for a check_titles run (Manual with FileID 0). A retry is one
+// subtitle again (FileID and Path set), Manual when it came from
+// check_titles.
 type Job struct {
 	EventID int64  `json:"event_id,omitempty"`
 	TitleID int64  `json:"title_id"`
@@ -21,13 +23,30 @@ type Job struct {
 	FileID  int64  `json:"file_id,omitempty"`
 	Path    string `json:"path,omitempty"` // subtitle path inside the Library folder
 	Manual  bool   `json:"manual,omitempty"`
+	// Tries is how many times this subtitle was tried before and stopped
+	// by the time limit or a Whisper timeout; NotBefore (Unix ms) is when
+	// it may run again.
+	Tries     int   `json:"tries,omitempty"`
+	NotBefore int64 `json:"not_before_ms,omitempty"`
 }
 
+// wholeTitle says whether j checks every subtitle of a title.
+func (j Job) wholeTitle() bool { return j.Manual && j.FileID == 0 }
+
 func (j Job) String() string {
-	if j.Manual {
-		return fmt.Sprintf("title %d (check_titles)", j.TitleID)
+	var s string
+	switch {
+	case j.wholeTitle():
+		s = fmt.Sprintf("title %d (check_titles)", j.TitleID)
+	case j.Manual:
+		s = fmt.Sprintf("title %d, file %d, %s (check_titles)", j.TitleID, j.FileID, j.Path)
+	default:
+		s = fmt.Sprintf("event %d, title %d, file %d, %s", j.EventID, j.TitleID, j.FileID, j.Path)
 	}
-	return fmt.Sprintf("event %d, title %d, file %d, %s", j.EventID, j.TitleID, j.FileID, j.Path)
+	if j.Tries > 0 {
+		s += fmt.Sprintf(", retry %d of %d", j.Tries, maxRetries)
+	}
+	return s
 }
 
 // State is what the plugin keeps in its data folder between starts.

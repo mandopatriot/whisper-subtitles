@@ -158,3 +158,21 @@ func TestPickForTitle(t *testing.T) {
 		t.Errorf("skipped %q", skipped)
 	}
 }
+
+// A retry from check_titles is one subtitle, still without the score rule.
+func TestPickForRetry(t *testing.T) {
+	files := titleFiles(t)
+	set := defaults()
+	set.ThresholdMovies = 80 // the en.srt scores 85
+	j := Job{TitleID: 42, FileID: 311, Path: "Arrival (2016)/Arrival (2016).en.srt", Tries: 1}
+	if _, err := pickForEvent(files, j, set); !errors.Is(err, errRule) {
+		t.Errorf("event retry over the threshold: %v", err)
+	}
+	j.Manual = true
+	if c, err := pickForEvent(files, j, set); err != nil || c.SubtitleID != 9001 {
+		t.Errorf("check_titles retry: %+v, %v", c, err)
+	}
+	if j.wholeTitle() || !(Job{TitleID: 42, Manual: true}).wholeTitle() {
+		t.Error("wholeTitle")
+	}
+}

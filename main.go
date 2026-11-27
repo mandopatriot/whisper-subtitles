@@ -43,6 +43,10 @@ type app struct {
 	// jobTimeout is the per-job time limit (job_timeout_minutes).
 	jobTimeout time.Duration
 
+	// retryWaits is the wait before each retry of a sync stopped by the
+	// time limit or a Whisper timeout.
+	retryWaits []time.Duration
+
 	mu       sync.Mutex
 	st       State
 	inFlight map[Job]bool
@@ -59,7 +63,7 @@ func newApp(dataDir string, set Settings, ha *HolyArrs, folders []Folder, out io
 		return nil, err
 	}
 	a := &app{dataDir: dataDir, set: set, ha: ha, folders: folders, out: out,
-		st: st, inFlight: map[Job]bool{}, wake: make(chan struct{}, 1),
+		st: st, inFlight: map[Job]bool{}, wake: make(chan struct{}, 1), retryWaits: retryWaits,
 		jobTimeout: time.Duration(set.JobTimeoutMinutes) * time.Minute}
 	// One queue for every upload: sync and transcription never reach the
 	// server at once.
@@ -148,29 +152,59 @@ func (a *app) handleLine(raw []byte) {
 	}
 }
 
-// next takes the oldest pending job not already running, or false.
-func (a *app) next() (Job, bool) {
+// A sync stopped by the job time limit or a Whisper timeout is tried again
+// by itself, at most maxRetries times, after each wait in retryWaits.
+const maxRetries = 2
+
+var retryWaits = []time.Duration{30 * time.Minute, 2 * time.Hour}
+
+// next takes the oldest pending job that is due and not already running. When
+// there is none, wait is how long until the next one is due (0: none is).
+func (a *app) next() (j Job, ok bool, wait time.Duration) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	now := time.Now().UnixMilli()
 	for _, j := range a.st.Pending {
-		if !a.inFlight[j] {
-			a.inFlight[j] = true
-			return j, true
+		if a.inFlight[j] {
+			continue
 		}
+		if d := j.NotBefore - now; d > 0 {
+			if wait == 0 || time.Duration(d)*time.Millisecond < wait {
+				wait = time.Duration(d) * time.Millisecond
+			}
+			continue
+		}
+		a.inFlight[j] = true
+		return j, true, 0
 	}
-	return Job{}, false
+	return Job{}, false, wait
 }
 
-// finish removes a job that ran to its end. A job cut off by a stop stays
-// queued for the next start.
-func (a *app) finish(j Job, stopped bool) {
+// finish removes a job that ran to its end and queues its retries, in one
+// save, so nothing is lost or run twice. A job cut off by a stop stays queued
+// for the next start, and its retries are not queued.
+func (a *app) finish(j Job, stopped bool, retries []Job) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	delete(a.inFlight, j)
-	if !stopped {
-		a.st.done(j)
-		a.saveLocked()
+	if stopped {
+		return
 	}
+	a.st.done(j)
+	for _, r := range retries {
+		r.Tries = j.Tries + 1
+		if r.Tries > maxRetries || r.Tries > len(a.retryWaits) {
+			fmt.Fprintf(a.out, "%s: not tried again, after %d retries\n", r, maxRetries)
+			continue
+		}
+		wait := a.retryWaits[r.Tries-1]
+		r.NotBefore = time.Now().Add(wait).UnixMilli()
+		if d := a.st.push(r); d != nil {
+			fmt.Fprintf(a.out, "queue full: dropped %s\n", d)
+		}
+		fmt.Fprintf(a.out, "%s: tried again in %s\n", r, wait)
+	}
+	a.saveLocked()
 }
 
 // worker runs jobs until ctx ends.
@@ -180,36 +214,64 @@ func (a *app) finish(j Job, stopped bool) {
 // the worker spins on it forever.
 func (a *app) worker(ctx context.Context) {
 	for ctx.Err() == nil {
-		j, ok := a.next()
+		j, ok, wait := a.next()
 		if !ok {
+			var due <-chan time.Time
+			var t *time.Timer
+			if wait > 0 {
+				t = time.NewTimer(wait)
+				due = t.C
+			}
 			select {
 			case <-ctx.Done():
-				return
 			case <-a.wake:
-				continue
+			case <-due:
 			}
+			if t != nil {
+				t.Stop()
+			}
+			continue
 		}
 		jctx, cancel := context.WithTimeout(ctx, a.jobTimeout)
-		a.runJob(jctx, j)
+		retries := a.runJob(jctx, j)
 		timedOut := errors.Is(jctx.Err(), context.DeadlineExceeded)
 		cancel()
 		if timedOut {
 			a.logf("%s: stopped at the time limit of %s", j, a.jobTimeout)
 		}
-		a.finish(j, ctx.Err() != nil)
+		a.finish(j, ctx.Err() != nil, retries)
 		a.poke() // let another worker look at the queue
 	}
 }
 
-// runJob picks, locates and checks the subtitles of one job.
-func (a *app) runJob(ctx context.Context, j Job) {
+// stoppedByLimit says whether err, or the job's ctx, means the job was cut
+// off by the time limit or a Whisper timeout, rather than checked: such a
+// sync is tried again. A subtitle a rule left alone never is.
+func stoppedByLimit(ctx context.Context, err error) bool {
+	if errors.Is(err, errRule) {
+		return false
+	}
+	return errors.Is(err, errASRTimeout) || errors.Is(ctx.Err(), context.DeadlineExceeded)
+}
+
+// retryOf is the job that tries c again by itself.
+func retryOf(j Job, c Candidate) Job {
+	return Job{EventID: j.EventID, TitleID: j.TitleID, Kind: j.Kind, FileID: c.FileID, Path: c.SubRel, Manual: j.Manual, Tries: j.Tries}
+}
+
+// runJob picks, locates and checks the subtitles of one job. It returns the
+// subtitles to try again, cut off by the time limit or a Whisper timeout.
+func (a *app) runJob(ctx context.Context, j Job) (retry []Job) {
 	files, err := a.ha.TitleSubtitles(ctx, j.TitleID)
 	if err != nil {
 		a.logf("%s: %v", j, err)
-		return
+		if stoppedByLimit(ctx, err) {
+			retry = append(retry, j) // nothing was checked: all of it again
+		}
+		return retry
 	}
 	var cands []Candidate
-	if j.Manual {
+	if j.wholeTitle() {
 		var skipped []string
 		cands, skipped = pickForTitle(files, a.set)
 		for _, s := range skipped {
@@ -225,7 +287,10 @@ func (a *app) runJob(ctx context.Context, j Job) {
 	}
 	for _, c := range cands {
 		if ctx.Err() != nil {
-			return
+			if stoppedByLimit(ctx, nil) {
+				retry = append(retry, retryOf(j, c)) // never reached
+			}
+			continue
 		}
 		c.TitleID = j.TitleID
 		loc, err := locate(a.folders, c.VideoRel, c.SubRel)
@@ -235,8 +300,12 @@ func (a *app) runJob(ctx context.Context, j Job) {
 		}
 		if err := a.check(ctx, c, loc); err != nil {
 			a.logf("%s: %s: %v", j, c, err)
+			if stoppedByLimit(ctx, err) {
+				retry = append(retry, retryOf(j, c))
+			}
 		}
 	}
+	return retry
 }
 
 // run reads events from r and runs jobs until r ends or ctx is done.

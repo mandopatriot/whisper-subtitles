@@ -80,7 +80,7 @@ func candidate(f FileView, r SubRow) Candidate {
 		Language: r.Language, Format: format(*r.RelativePath), Score: r.Score}
 }
 
-// pickForEvent finds the subtitle an event names and checks it.
+// pickForEvent finds the subtitle an event (or a retry) names and checks it.
 func pickForEvent(files []FileView, j Job, set Settings) (Candidate, error) {
 	for _, f := range files {
 		if f.FileID != j.FileID {
@@ -93,7 +93,7 @@ func pickForEvent(files []FileView, j Job, set Settings) (Candidate, error) {
 			if r.RelativePath == nil || *r.RelativePath != j.Path || r.State != "present" {
 				continue
 			}
-			if err := checkRow(r, j.Kind, set, false); err != nil {
+			if err := checkRow(r, j.Kind, set, j.Manual); err != nil {
 				return Candidate{}, err
 			}
 			return candidate(f, r), nil

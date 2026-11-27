@@ -54,6 +54,12 @@ pieces agree, it uses HolyArrs's own Sync fix. The old file goes to the
 holding folder and History shows the change. If it is not sure, it leaves
 the subtitle alone and logs why.
 
+Waiting syncs are kept in the plugin's data folder, so a restart picks them
+up again; one cut off by the restart runs again from its start. A sync
+stopped by the time limit or by the Whisper server not answering in time is
+tried again by itself, after 30 minutes and then after 2 hours, and then
+given up. A subtitle that was checked and left alone is not tried again.
+
 ### Timing: words or phrases
 
 - **Word timings give precise sync.** Whisper Pro ASR engines based on
