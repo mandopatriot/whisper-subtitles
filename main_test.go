@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -570,5 +571,30 @@ func TestRunSyncOff(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "check_titles: sync is off") {
 		t.Errorf("log:\n%s", log)
+	}
+}
+
+// The started line names the commit the plugin was built from.
+func TestBuildHash(t *testing.T) {
+	set := func(kv ...string) *debug.BuildInfo {
+		b := &debug.BuildInfo{}
+		for i := 0; i+1 < len(kv); i += 2 {
+			b.Settings = append(b.Settings, debug.BuildSetting{Key: kv[i], Value: kv[i+1]})
+		}
+		return b
+	}
+	for _, c := range []struct {
+		info *debug.BuildInfo
+		want string
+	}{
+		{set("vcs.revision", "38a96d8f0c1e2d3b4a5968778695a4b3c2d1e0f9", "vcs.modified", "false"), "38a96d8f0c1e"},
+		{set("vcs.revision", "38a96d8f0c1e2d3b4a5968778695a4b3c2d1e0f9", "vcs.modified", "true"), "38a96d8f0c1e-dirty"},
+		{set("vcs.revision", "abc123"), "abc123"},
+		{set("GOOS", "linux"), "unknown"},
+		{nil, "unknown"},
+	} {
+		if got := buildHash(c.info); got != c.want {
+			t.Errorf("buildHash = %q, want %q", got, c.want)
+		}
 	}
 }

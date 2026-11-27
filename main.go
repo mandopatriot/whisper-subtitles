@@ -377,6 +377,33 @@ loop:
 	return readErr
 }
 
+// buildHash is the commit the program was built from, as Go stamps it, cut
+// to 12 characters, with "-dirty" when the tree had uncommitted changes.
+func buildHash(info *debug.BuildInfo) string {
+	if info == nil {
+		return "unknown"
+	}
+	rev, dirty := "", false
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	if rev == "" {
+		return "unknown"
+	}
+	if len(rev) > 12 {
+		rev = rev[:12]
+	}
+	if dirty {
+		rev += "-dirty"
+	}
+	return rev
+}
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
@@ -411,8 +438,9 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	a.logf("whisper-subtitles started: %d folders, sync %t (%d jobs at once, check only %t, %d jobs waiting), subtitle site %t",
-		len(folders), set.Sync, set.Jobs, set.CheckOnly, len(a.st.Pending), a.site != nil)
+	info, _ := debug.ReadBuildInfo()
+	a.logf("whisper-subtitles started (build %s): %d folders, sync %t (%d jobs at once, check only %t, %d jobs waiting), subtitle site %t",
+		buildHash(info), len(folders), set.Sync, set.Jobs, set.CheckOnly, len(a.st.Pending), a.site != nil)
 	if set.ASRURL == "" {
 		a.logf("set the Whisper server address before subtitles can be checked or written")
 	} else if err := newWhisper(set.ASRURL).Ready(ctx); err != nil {
